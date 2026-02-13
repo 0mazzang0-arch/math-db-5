@@ -276,21 +276,33 @@ def parse_tagged_response(text):
     }
 
     # [Verbose Extraction Helper] - [복구 완료] 로그 및 부분 매칭 기능
+# ==========================================
+# 2. 원본 구조를 유지하되 유연성만 더한 파서
+# ==========================================
     def extract_section(start_tag, end_tag, debug_name):
-        pattern = re.escape(start_tag) + r"(.*?)" + re.escape(end_tag)
+        base_start = start_tag.replace("[", "").replace("]", "")
+        base_end = end_tag.replace("[", "").replace("]", "")
+        
+        # 정규식만 유연하게 변경 (대괄호 1~2개, 공백 허용)
+        pattern = r'\[{1,2}\s*' + base_start + r'\s*\]{1,2}(.*?)\[{1,2}\s*' + base_end + r'\s*\]{1,2}'
         match = re.search(pattern, text, re.DOTALL)
         if match: return match.group(1).strip()
         
         # Fallback: 루즈 매칭
-        pattern_loose = re.escape(start_tag) + r"(.*)"
+        pattern_loose = r'\[{1,2}\s*' + base_start + r'\s*\]{1,2}(.*)'
         match_loose = re.search(pattern_loose, text, re.DOTALL)
         if match_loose:
             content = match_loose.group(1).strip()
-            next_tag_match = re.search(r'\[\[.*?_START\]\]', content)
+            next_tag_match = re.search(r'\[{1,2}\s*[A-Z_]+_START\s*\]{1,2}', content)
             if next_tag_match: return content[:next_tag_match.start()].strip()
             return content
+            
+        # 최후의 보루 (AI_SOLUTION 전용)
+        if "AI_SOLUTION" in start_tag:
+            alt_match = re.search(r'#+\s*AI\s*(정석\s*)?해설(.*?)(?=#+|$)', text, re.DOTALL)
+            if alt_match: return alt_match.group(2).strip()
+            
         return ""
-
     def clean_list(raw_text):
         if not raw_text: return []
         lines = raw_text.split('\n')

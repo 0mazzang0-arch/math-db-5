@@ -555,6 +555,9 @@ def make_callout(text, icon="💡"):
 # ==========================================================
 # [Core Logic 4] 본문 내용 생성 (The Body Builder) - V30
 # ==========================================================
+# ==========================================
+# 1. 원본 주석을 100% 살린 표 생성기
+# ==========================================
 def make_teacher_decoding_table(decoding_list):
     """
     [신규 기능] '선생님의 시선' 데이터를 Notion 표(Table)로 변환합니다.
@@ -597,10 +600,10 @@ def make_teacher_decoding_table(decoding_list):
             "type": "table_row",
             "table_row": {
                 "cells": [
-                    [{"text": {"content": symbol}}],
-                    [{"text": {"content": dtype}}],
-                    [{"text": {"content": content}}],
-                    [{"text": {"content": comment}}]
+                    make_rich_text_list(symbol) or [{"type": "text", "text": {"content": " "}}],
+                    make_rich_text_list(dtype) or [{"type": "text", "text": {"content": " "}}],
+                    make_rich_text_list(content) or [{"type": "text", "text": {"content": " "}}],
+                    make_rich_text_list(comment) or [{"type": "text", "text": {"content": " "}}]
                 ]
             }
         }
