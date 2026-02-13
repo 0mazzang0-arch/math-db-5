@@ -33,11 +33,10 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 
 **CORE DIRECTIVE (THE PRIME DIRECTIVE):**
 1. **NO SUMMARIZATION:** You are FORBIDDEN from summarizing. You must transcribe every detail.
-2. **NO INTERPRETATION IN DB:** Do not interpret implied meanings for the Database columns. Extract only what is explicitly marked.
+2. **VARIABLE MAPPING (NEW):** You must first define symbols as variables (Step 1), then use them in the narrative (Step 2).
 3. **HYBRID SEPARATION OF CONCERNS (CRITICAL):**
-   * The user's handwriting (arrows `->`, notes, symbols) represents the **"Teacher's View"**. All of it goes into `SECTION A`.
+   * The user's handwriting (arrows `->`, notes, symbols) represents the **"Teacher's View"**.
    * The `ACTION_PROTOCOL` must act as a **Hybrid**. You MUST look at the Teacher's arrows/logic from SECTION A, use them as your foundation (Anchor), and then expand upon them to propose universal mathematical rules (AI's Proposal).
-   * Handwriting -> Go to **Verbatim**
 
    ### [CRITICAL ADDITION] ANSWER EXTRACTION
 * **Target:** You MUST identify the final answer of the problem.
@@ -48,107 +47,93 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 
 # [PART 1] DETAILED EXTRACTION PROTOCOLS
 
-## SECTION A: TEACHER'S DECODING (Teacher's View - 100% User Dependent)
-**CRITICAL CHANGE:** For the following tags, you MUST use the format: `Symbol | Content | AI_Interpretation`
-* **Symbol:** The mark used by the teacher (e.g., 🎯, ⚡, ❗, 🔑, ①, (가), or arrows `->`).
-* **Content:** The verbatim handwritten text next to the symbol.
-* **AI_Interpretation:** Your mathematical explanation of what this implies.
+## STEP 1: SYMBOL DEFINITION (Mapped from Teacher's View)
+**Goal:** Create a `[[SYMBOL_TABLE]]`.
+**Instruction:** Extract the following specific sections exactly as defined, but format them as rows in the Symbol Table.
 
-### 1. NECESSITY (필연성) - `[[NECESSITY]]`
-* **Trigger:** Text followed by an arrow (`->`), `[...]`, or `(필)`.
-* **Instruction:** ALL logical flows and arrows drawn by the user MUST be captured here. This is the Teacher's thought process.
-* **Format:** `[Symbol/Arrow] | [Text inside brackets or pointed to] | [Why is this necessary?]`
-
-### 2. KEY IDEA (핵심) - `[[KEY_IDEA]]`
-* **Trigger:** `㊄`, `(핵)`, or `🔑`.
-* **Format:** `[Symbol] | [Text] | [What theorem/concept is used?]`
-
-### 3. SPECIAL POINT (특이점) - `[[SPECIAL_POINT]]`
-* **Trigger:** `㊕`, `(특)`, or `❗`.
-* **Format:** `[Symbol] | [Text] | [Why is this a trap/special case?]`
-
-### 4. GOAL (구하는 목표) - `[[GOAL]]`
-* **Trigger:** `㊈`, `(구)`, or `🎯`.
-* **Format:** `[Symbol] | [Text] | [What is the final target variable?]`
-
-### 5. CONDITIONS (조건) - `[[CONDITIONS]]`
+### 1. CONDITIONS (조건) -> [[SYMBOL_TABLE]]
 * **Trigger:** `①`, `②`, `(가)`, `(나)`, or `⚡`.
 * **Format:** `[Symbol] | [Text] | [Mathematical translation of condition]`
+* **Action:** Define the symbol using the content and translation.
+
+### 2. GOAL (구하는 목표) -> [[SYMBOL_TABLE]]
+* **Trigger:** `㊈`, `(구)`, or `🎯`.
+* **Format:** `[Symbol] | [Text] | [What is the final target variable?]`
+* **Action:** Define the goal symbol.
+
+### 3. KEY IDEA (핵심) -> [[SYMBOL_TABLE]]
+* **Trigger:** `㊄`, `(핵)`, or `🔑`.
+* **Format:** `[Symbol] | [Text] | [What theorem/concept is used?]`
+* **Action:** Define the key idea symbol.
+
+### 4. SPECIAL POINT (특이점) -> [[SYMBOL_TABLE]]
+* **Trigger:** `㊕`, `(특)`, or `❗`.
+* **Format:** `[Symbol] | [Text] | [Why is this a trap/special case?]`
+* **Action:** Define the special point symbol.
 
 ---
 
-## SECTION B: BODY CONTENT & SUPPLEMENTARY (AI's Independent Brain)
+## STEP 2: LOGIC NARRATIVE (Contextual Substitution)
+**Goal:** Create a `[[LOGIC_NARRATIVE]]`.
+**Instruction:** Combine the following logic sections. **You MUST use the symbols defined in STEP 1.**
 
----
+# 👇 [여기서부터 덮어씌우세요 (화살표 조건 삭제 -> 대괄호 절대 규칙 적용)] 👇
+### 1. NECESSITY (필연성) -> [[LOGIC_NARRATIVE]]
+* **Trigger:** Text enclosed in square brackets `[...]` or marked with `(필)`.
+* **Strict Rule:** The user has declared that **ANY text inside `[...]` is "Necessity"**.
+    * If you see `[Because of this...]`, treat it immediately as the logical reason.
+    * Arrows (`->`) are optional. The bracket `[...]` is the absolute identifier.
+* **Substitution Rule:** You MUST use the format **`Symbol(Definition)`**.
+    * Example: "**①(Condition)** leads to **[Necessity](Using Formula X)**."
 
-## SECTION B: BODY CONTENT & SUPPLEMENTARY (AI's Hybrid Brain)
-
-### 1. ACTION PROTOCOL (AI가 제안하는 필연성 & 행동강령) - `[[ACTION_PROTOCOL]]`
+### 2. ACTION PROTOCOL (AI가 제안하는 필연성 & 행동강령) -> [[LOGIC_NARRATIVE]]
 * **Target:** HYBRID ANCHOR & EXPAND STRATEGY.
-* **Instruction:** Do NOT create rules completely detached from the user's solution. You MUST trace the user's arrows and logic (Necessity) from SECTION A. Use them as an 'Anchor', and 'Expand' upon them. Tell the student *why* the teacher's flow is a universal law. Add your own advanced insights to complement the teacher's logic.
-* **Format:** Write 2-4 bullet points combining Necessity and Action. Format: **[조건/상황 파악]** ... -> **[필연적 행동/전략]** ... (Explain *why* this action is mathematically inevitable based on the teacher's flow).
+* **Instruction:** Do NOT create rules completely detached from the user's solution. You MUST trace the user's arrows and logic (Necessity) and **Expand** upon it. Tell the student *why* the teacher's flow is a universal law.
 
-### 2. STRATEGY (전략 로드맵) - `[[STRATEGY]]`
+### 3. STRATEGY (전략 로드맵) -> [[LOGIC_NARRATIVE]]
 * **Target:** Macro-level Step-by-Step Workflow.
-* **Instruction:** Provide a clear, numbered 1-2-3-4 roadmap of the overall problem-solving process. Translate any circled numbers (①, ②) into their actual mathematical meanings. This serves as a navigator for the entire solution.
+* **Instruction:** Provide a clear, numbered 1-2-3-4 roadmap. Translate any circled numbers into their actual mathematical meanings.
 
-### 3. PRACTICAL CONCEPTS - `[[PRACTICAL_CONCEPTS]]`
+---
+
+## STEP 3: INDEPENDENT MODULES (The Safety Net)
+**Instruction:** Extract these sections exactly as is (No structural change).
+
+### 1. PRACTICAL CONCEPTS -> [[PRACTICAL_CONCEPTS]]
 * **Trigger:** `㉦` or `(실)`. Format: `Title: ... || Content: ...`
 
-### 4. BASIC CONCEPTS - `[[BASIC_CONCEPTS]]`
+### 2. BASIC CONCEPTS -> [[BASIC_CONCEPTS]]
 * **Trigger:** `㊂` or `(기)`. Basic definitions used.
 
-### 5. FIGURE ANALYSIS - `[[FIGURE_ANALYSIS]]`
+### 3. FIGURE ANALYSIS -> [[FIGURE_ANALYSIS]]
 * **Target:** Description of graphs or geometric figures.
 
-### 6. VERBATIM - `[[VERBATIM]]`
+### 4. VERBATIM -> [[VERBATIM]]
 * **Target:** ALL handwriting. Strict LaTeX. No Korean inside `$`. Every pixel must be translated to LaTeX.
 
-### 7. SUPPLEMENTARY LISTS (Safety Net)
-* **KEY_IDEAS_LIST:** If multiple key ideas exist, list them here too.
-* **SPECIAL_POINTS_LIST:** If multiple special points exist, list them here too.
+### 5. SUPPLEMENTARY LISTS (Safety Net)
+* **Instruction:** If multiple Key Ideas or Special Points exist that didn't fit the Symbol Table, YOU MUST LIST THEM in their own independent tags (`[[KEY_IDEAS_LIST]]`, `[[SPECIAL_POINTS_LIST]]`).
+* **Constraint:** Do NOT summarize them into the Database Columns. Keep them raw and detailed.
 
----
-
+# 👇 [TAGGED_SYSTEM_PROMPT의 맨 아래 부분을 이것으로 덮어씌우세요] 👇
+# ---------------------------------------------------------------------
 # [PART 2] OUTPUT FORMAT (STRICT TAG SYSTEM)
 
 **Generate output strictly in KOREAN.**
 
-[[NECESSITY_START]]
-(Format: Symbol | Content | Interpretation)
-[[NECESSITY_END]]
+[[SYMBOL_TABLE_START]]
+(Format: Symbol | Meaning)
+Example:
+① | a,b,c는 음이 아닌 정수
+(핵) | 중복조합(H)의 활용
+[[SYMBOL_TABLE_END]]
 
-[[KEY_IDEA_START]]
-(Format: Symbol | Content | Interpretation)
-[[KEY_IDEA_END]]
-
-[[KEY_IDEAS_LIST_START]]
-(Supplementary list for safety)
-[[KEY_IDEAS_LIST_END]]
-
-[[SPECIAL_POINT_START]]
-(Format: Symbol | Content | Interpretation)
-[[SPECIAL_POINT_END]]
-
-[[SPECIAL_POINTS_LIST_START]]
-(Supplementary list for safety)
-[[SPECIAL_POINTS_LIST_END]]
-
-[[GOAL_START]]
-(Format: Symbol | Content | Interpretation)
-[[GOAL_END]]
-
-[[CONDITIONS_START]]
-(Format: Symbol | Content | Interpretation)
-[[CONDITIONS_END]]
-
-[[ACTION_PROTOCOL_START]]
-(AI's independent generalized strategy heuristics)
-[[ACTION_PROTOCOL_END]]
-
-[[STRATEGY_START]]
-(Workflow summary)
-[[STRATEGY_END]]
+[[LOGIC_NARRATIVE_START]]
+(Format: Bullet points with Variable Substitution. Translate arrows `->` into sentences.)
+Example:
+* **[상황 파악]** 문제의 조건 **①(음이 아닌 정수)**과 **②(합이 14)**를 보았을 때, 이는 전형적인 **(핵)(중복조합)** 문제임.
+* **[필연적 행동]** 따라서 **[필연성](방정식의 해 구하기)** 논리에 따라 $3H_{14}$를 계산하려 했으나, **(특)(0이 아님)** 조건 때문에 여사건을 도입함.
+[[LOGIC_NARRATIVE_END]]
 
 [[PRACTICAL_CONCEPTS_START]]
 (Format: Title: ... || Content: ...)
@@ -162,17 +147,31 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 (Graph description)
 [[FIGURE_ANALYSIS_END]]
 
-[[VERBATIM_START]]
-(Pixel-perfect transcription)
-[[VERBATIM_END]]
-
 [[CORRECT_ANSWER_START]]
 (Extracted final answer only, e.g., 3, 5, 149)
 [[CORRECT_ANSWER_END]]
 
+[[VERBATIM_START]]
+(Pixel-perfect transcription)
+[[VERBATIM_END]]
+
 [[AI_SOLUTION_START]]
 (Standard solution)
 [[AI_SOLUTION_END]]
+
+[[KEY_IDEAS_LIST_START]]
+(Supplementary list for safety: List ALL extra key ideas here)
+[[KEY_IDEAS_LIST_END]]
+
+[[SPECIAL_POINTS_LIST_START]]
+(Supplementary list for safety: List ALL extra special points here)
+[[SPECIAL_POINTS_LIST_END]]
+
+[[DB_COLUMNS_START]]
+necessity: (Legacy Summary for DB)
+key_idea: (Legacy Summary for DB)
+special_point: (Legacy Summary for DB)
+[[DB_COLUMNS_END]]
 
 [[DEEP_INSIGHT_START]]
 (Leave empty)
@@ -276,14 +275,18 @@ def parse_tagged_response(text):
     print("🚜 [Parser V30] 데이터 추출 시작 (Manual & Verbose Mode)...")
     
     data = {
-        "db_columns": {"necessity": "", "key_idea": "", "special_point": ""},
+        "db_columns": {"necessity": "", "key_idea": "", "special_point": "", "correct_answer": ""},
         "body_content": {
-            "teacher_decoding": [], # [신규] 선생님의 시선 통합
-            "conditions": [], "special_points": [], "key_ideas": [], # [복구] Legacy 리스트 필드
-            "basic_concepts": [], "practical_concepts": [], 
-            "figure_analysis": "", "verbatim_handwriting": "", 
-            "ai_solution": "", "instructor_solution": "",
-            "strategy_overview": "", "action_protocol": ""
+            "symbol_table": [],      # [V35] 기호 정의 테이블
+            "logic_narrative": [],   # [V35] 논리 서술 리스트
+            
+            "key_ideas_list": [],    # [Safety] 추가 핵심 리스트
+            "special_points_list": [], # [Safety] 추가 특이점 리스트
+            
+            "practical_concepts": [], "basic_concepts": [],     
+            "figure_analysis": "",    "verbatim_handwriting": "", 
+            "ai_solution": "",        "instructor_solution": "",
+            "conditions": [], "goal": "" # Legacy 호환용
         }
     }
 
@@ -314,12 +317,15 @@ def parse_tagged_response(text):
             
         return ""
 
-    def clean_list(raw_text):
+# [Helper] 리스트 파싱 (불릿 포인트 제거 + 기호 보존 Fix)
+    # [Helper] 리스트 파싱 (함수명 변경 및 로직 확정)
+    def parse_list(raw_text):
         if not raw_text: return []
         lines = raw_text.split('\n')
         cleaned = []
         for line in lines:
-            line = re.sub(r'^[\s\*\-\d\.]+', '', line).strip() 
+            # [핀셋 수정] ①, (가) 보존 (불릿과 1. 2. 같은 번호만 제거)
+            line = re.sub(r'^\s*([\*\-]\s*|\d+\.\s*)', '', line).strip()
             if line: cleaned.append(line)
         return cleaned
 
@@ -366,75 +372,43 @@ def parse_tagged_response(text):
             })
         return items
 
-    # --- 1. Extraction & Integration (Dual Processing) ---
-    print("  >> 선생님의 시선(Decoding) 추출 및 레거시 데이터 병합 중...")
-    decoding_list = []
-    
-    # 1. Necessity
-    raw_nec = extract_section("[[NECESSITY_START]]", "[[NECESSITY_END]]", "Necessity")
-    decoding_list.extend(parse_teacher_decoding(raw_nec, "필연성"))
-    data["db_columns"]["necessity"] = raw_nec.replace("|", " ").replace("\n", " ")
+# 1. [STEP 1] Symbol Table 파싱
+    raw_symbols = extract_section("SYMBOL_TABLE_START", "SYMBOL_TABLE_END", "Symbol")
+    symbol_list = []
+    if raw_symbols:
+        for line in raw_symbols.split('\n'):
+            if "|" in line:
+                parts = line.split("|", 1)
+                symbol_list.append({"symbol": parts[0].strip(), "meaning": parts[1].strip()})
+    data["body_content"]["symbol_table"] = symbol_list
 
-    # 2. Key Idea (Merge Single + List Tag) [복구된 로직]
-    k1 = extract_section("[[KEY_IDEA_START]]", "[[KEY_IDEA_END]]", "KeyIdea(Single)")
-    k2 = extract_section("[[KEY_IDEAS_LIST_START]]", "[[KEY_IDEAS_LIST_END]]", "KeyIdea(List)")
-    raw_key_merged = merge_and_deduplicate(k1, k2)
-    
-    # 통합된 텍스트를 Decoding List에도 넣고, DB 컬럼에도 넣음 (이중 저장)
-    decoding_list.extend(parse_teacher_decoding(raw_key_merged, "핵심 아이디어"))
-    data["db_columns"]["key_idea"] = raw_key_merged.replace("|", " ").replace("\n", " ")
-    data["body_content"]["key_ideas"] = clean_list(k2) # [Legacy List 보존]
+    # 2. [STEP 2] Logic Narrative 파싱
+    raw_logic = extract_section("LOGIC_NARRATIVE_START", "LOGIC_NARRATIVE_END", "Logic")
+    data["body_content"]["logic_narrative"] = parse_list(raw_logic)
 
-    # 3. Special Point (Merge Single + List Tag) [복구된 로직]
-    s1 = extract_section("[[SPECIAL_POINT_START]]", "[[SPECIAL_POINT_END]]", "SpecialPoint(Single)")
-    s2 = extract_section("[[SPECIAL_POINTS_LIST_START]]", "[[SPECIAL_POINTS_LIST_END]]", "SpecialPoint(List)")
-    raw_sp_merged = merge_and_deduplicate(s1, s2)
-    
-    decoding_list.extend(parse_teacher_decoding(raw_sp_merged, "특이점"))
-    data["db_columns"]["special_point"] = raw_sp_merged.replace("|", " ").replace("\n", " ")
-    data["body_content"]["special_points"] = clean_list(s2) # [Legacy List 보존]
+    # 3. [Safety Nets] 독립 리스트 파싱
+    data["body_content"]["key_ideas_list"] = parse_list(extract_section("KEY_IDEAS_LIST_START", "KEY_IDEAS_LIST_END", "KeyList"))
+    data["db_columns"]["key_idea"] = " ".join(data["body_content"]["key_ideas_list"])
 
-    # 4. Goal
-    raw_goal = extract_section("[[GOAL_START]]", "[[GOAL_END]]", "Goal")
-    decoding_list.extend(parse_teacher_decoding(raw_goal, "구하는 목표"))
-    data["body_content"]["goal"] = raw_goal
+    data["body_content"]["special_points_list"] = parse_list(extract_section("SPECIAL_POINTS_LIST_START", "SPECIAL_POINTS_LIST_END", "SpecList"))
+    data["db_columns"]["special_point"] = " ".join(data["body_content"]["special_points_list"])
 
-    # 5. Conditions
-    raw_cond = extract_section("[[CONDITIONS_START]]", "[[CONDITIONS_END]]", "Conditions")
-    decoding_list.extend(parse_teacher_decoding(raw_cond, "조건"))
-    data["body_content"]["conditions"] = clean_list(raw_cond) # [Legacy List 보존]
-    
-    # 최종 통합 리스트 저장
-    data["body_content"]["teacher_decoding"] = decoding_list
-
-    # --- 2. Body Content Extraction (Restored All Fields) ---
-    print("  >> 본문 콘텐츠 및 그래프/기본개념 추출 중...")
-    data["body_content"]["verbatim_handwriting"] = extract_section("[[VERBATIM_START]]", "[[VERBATIM_END]]", "Verbatim")
-    data["db_columns"]["correct_answer"] = extract_section("[[CORRECT_ANSWER_START]]", "[[CORRECT_ANSWER_END]]", "Correct Answer")
-    data["body_content"]["ai_solution"] = extract_section("[[AI_SOLUTION_START]]", "[[AI_SOLUTION_END]]", "AI Solution")
-    data["body_content"]["instructor_solution"] = extract_section("[[DEEP_INSIGHT_START]]", "[[DEEP_INSIGHT_END]]", "Insight")
-    
-    
-    data["body_content"]["strategy_overview"] = extract_section("[[STRATEGY_START]]", "[[STRATEGY_END]]", "Strategy")
-    data["body_content"]["action_protocol"] = extract_section("[[ACTION_PROTOCOL_START]]", "[[ACTION_PROTOCOL_END]]", "ActionProtocol")
-    
-    # [복구] Figure Analysis & Basic Concepts
-    data["body_content"]["figure_analysis"] = extract_section("[[FIGURE_ANALYSIS_START]]", "[[FIGURE_ANALYSIS_END]]", "Figure")
-    data["body_content"]["basic_concepts"] = clean_list(extract_section("[[BASIC_CONCEPTS_START]]", "[[BASIC_CONCEPTS_END]]", "BasicConcepts"))
-
-    # 실전개념 정제
-    pc_raw = extract_section("[[PRACTICAL_CONCEPTS_START]]", "[[PRACTICAL_CONCEPTS_END]]", "PracticalConcepts")
+    # 4. [Independent Modules] 실전개념, 기본개념, 그래프, 정답, 원문
+    pc_raw = extract_section("PRACTICAL_CONCEPTS_START", "PRACTICAL_CONCEPTS_END", "PracConcept")
     pc_list = []
     if pc_raw:
-        lines = pc_raw.split('\n')
-        for line in lines:
+        for line in pc_raw.split('\n'):
             parts = re.split(r'\|\|', line)
             if len(parts) >= 2:
-                title_part = parts[0].replace("Title:", "").strip()
-                content_part = parts[1].replace("Content:", "").strip()
-                if title_part:
-                    pc_list.append({"title": title_part, "content": content_part})
+                pc_list.append({"title": parts[0].replace("Title:", "").strip(), "content": parts[1].replace("Content:", "").strip()})
     data["body_content"]["practical_concepts"] = pc_list
+
+    data["body_content"]["basic_concepts"] = parse_list(extract_section("BASIC_CONCEPTS_START", "BASIC_CONCEPTS_END", "BasicConcept"))
+    data["body_content"]["figure_analysis"] = extract_section("FIGURE_ANALYSIS_START", "FIGURE_ANALYSIS_END", "Figure")
+    data["db_columns"]["correct_answer"] = extract_section("CORRECT_ANSWER_START", "CORRECT_ANSWER_END", "Answer")
+    data["body_content"]["verbatim_handwriting"] = extract_section("VERBATIM_START", "VERBATIM_END", "Verbatim")
+    data["body_content"]["ai_solution"] = extract_section("AI_SOLUTION_START", "AI_SOLUTION_END", "AISolution")
+    data["body_content"]["instructor_solution"] = extract_section("DEEP_INSIGHT_START", "DEEP_INSIGHT_END", "Insight")
 
     return data
 

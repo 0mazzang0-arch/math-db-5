@@ -598,6 +598,55 @@ def make_quote_block(text):
         "type": "quote",
         "quote": {"rich_text": rendered_rich_text}
     }
+# ----------------------------------------------------------------------------------
+# [V31 New Renderer] 선생님의 시선: Step 1 & Step 2 분리 렌더링
+# ----------------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------------
+# [V35 Renderer] 누락되었던 렌더링 헬퍼 함수 복구
+# ----------------------------------------------------------------------------------
+def make_symbol_table(symbol_list):
+    """ [Step 1] 기호 정의 테이블 생성 """
+    if not symbol_list: return None
+    table_rows = []
+    # Header
+    table_rows.append({
+        "type": "table_row",
+        "table_row": {
+            "cells": [
+                [{"text": {"content": "기호 (Symbol)", "link": None}, "annotations": {"bold": True, "color": "blue"}}],
+                [{"text": {"content": "의미 (Definition & Variable)", "link": None}, "annotations": {"bold": True, "color": "blue"}}]
+            ]
+        }
+    })
+    # Body
+    for item in symbol_list:
+        sym = item.get("symbol", "")
+        mean = item.get("meaning", "")
+        table_rows.append({
+            "type": "table_row",
+            "table_row": {
+                "cells": [make_rich_text_list(sym), make_rich_text_list(mean)]
+            }
+        })
+    return {"object": "block", "type": "table", "table": {"table_width": 2, "has_column_header": True, "children": table_rows}}
+
+def make_logic_narrative_blocks(narrative_list):
+    """ [Step 2] 논리 서술 블록 생성 """
+    if not narrative_list: return []
+    blocks = []
+    for line in narrative_list:
+        icon = "👉"
+        if "[상황" in line: icon = "🧐"
+        elif "[핵심" in line or "(핵)" in line: icon = "🔑"
+        elif "[특이" in line or "(특)" in line: icon = "⚠️"
+        elif "[필연" in line or "[행동" in line or "따라서" in line: icon = "🚀"
+        
+        blocks.append({
+            "object": "block", "type": "callout",
+            "callout": {"rich_text": make_rich_text_list(line), "icon": {"emoji": icon}, "color": "gray_background"}
+        })
+    return blocks
 # ==========================================================
 # [Core Logic 4] 본문 내용 생성 (The Body Builder) - V30
 # ==========================================================
@@ -719,14 +768,29 @@ def append_children(page_id, body_content):
         })
     
     # -------------------------------------------------------
-    # 2. 🧠 선생님의 시선 (Teacher's Decoding) [신규/통합]
     # -------------------------------------------------------
-    decoding_list = body_content.get("teacher_decoding", [])
-    if decoding_list:
+    # 2. 🧠 선생님의 시선 (Teacher's Decoding V31)
+    # -------------------------------------------------------
+    # [Step 1] 기호 정의 (Symbol Table)
+    symbol_data = body_content.get("symbol_table", [])
+    logic_data = body_content.get("logic_narrative", [])
+    
+    if symbol_data or logic_data:
         all_blocks.append(make_heading_2("🧠 선생님의 시선 (Teacher's Decoding)", "blue_background"))
-        table = make_teacher_decoding_table(decoding_list)
-        if table: all_blocks.append(table)
-        all_blocks.append(make_text_block(" ")) # 공백
+        
+        # 2-1. 기호 정의 테이블
+        if symbol_data:
+            all_blocks.append(make_text_block("📌 기호 정의 (Symbol Map)"))
+            s_table = make_symbol_table(symbol_data)
+            if s_table: all_blocks.append(s_table)
+            all_blocks.append(make_text_block(" "))
+
+        # 2-2. 논리 서술 (이야기)
+        if logic_data:
+            all_blocks.append(make_text_block("📝 논리적 풀이 흐름 (Logic Narrative)"))
+            l_blocks = make_logic_narrative_blocks(logic_data)
+            all_blocks.extend(l_blocks)
+            all_blocks.append(make_text_block(" "))
 
     # -------------------------------------------------------
     # 3. 🤖 행동 강령 & 전략 (Action Protocol & Algorithm)
