@@ -135,3 +135,10 @@
 2026-02-14 00:42:41,204 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 00:42:42,259 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
 2026-02-14 00:42:42,262 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:42:44,775 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81bb-b295-d663476b2e6b/children HTTP/1.1" 200 None
+2026-02-14 00:46:29,939 - WARNING - ⚠️ [Suspect] '중복조합의 활용 (부정방정식)' vs '중복조합 부정방정식 사용가능한 상황' (64%). 태그 부착 저장.
+2026-02-14 00:46:30,600 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:46:31,290 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 00:46:31,292 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:46:32,144 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
+2026-02-14 00:46:32,147 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
