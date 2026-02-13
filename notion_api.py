@@ -713,11 +713,11 @@ def append_children(page_id, body_content):
     protocol = body_content.get("action_protocol", "")
     
     if strategy or protocol:
-        all_blocks.append(make_heading_2("🤖 행동 강령 & 전략 (Action Protocol)"))
+        all_blocks.append(make_heading_2("🤖 AI가 제안하는 필연성 & 행동강령"))
         if strategy:
             all_blocks.append(make_text_block(f"🗺️ 전략 로드맵:\n{strategy}"))
         if protocol:
-            all_blocks.append(make_text_block(f"⚡ 행동 강령:\n{protocol}"))
+            all_blocks.append(make_text_block(f"⚡ AI가 제안하는 필연성 & 행동강령:\n{protocol}"))
         all_blocks.append(make_text_block(" "))
 
     # -------------------------------------------------------
