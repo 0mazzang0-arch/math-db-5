@@ -1,0 +1,8 @@
+# 무시할 폴더 및 파일들
+build/
+dist/
+__pycache__/
+*.spec
+*.exe
+*.pkg
+_ERROR_FILES/

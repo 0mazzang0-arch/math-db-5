@@ -1,7 +1,11 @@
 import json
 import os
 import shutil
+import sys
 from datetime import datetime
+
+# [추가됨] 부모 폴더(거실)를 볼 수 있게 시야를 넓혀주는 코드
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import MD_DIR_PATH
 import database_manager

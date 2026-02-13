@@ -488,7 +488,12 @@ def create_new_problem_page(title, db_data, concept_ids=None):
         props["핵심 아이디어"] = {"rich_text": [{"text": {"content": str(db_data["key_idea"])[:2000]}}]}
     if db_data.get("special_point"):
         props["특이점"] = {"rich_text": [{"text": {"content": str(db_data["special_point"])[:2000]}}]}
-    
+    # [NEW] 정답 (Correct Answer) - 안전장치 적용 (Over-engineering)
+    if db_data.get("correct_answer"):
+        # 정답이 너무 길면(해설이 딸려오면) 100자로 자르는 방어 로직 적용
+        ans_val = str(db_data["correct_answer"]).strip()
+        if len(ans_val) > 100: ans_val = ans_val[:100]
+        props["정답"] = {"rich_text": [{"text": {"content": ans_val}}]}
     # 태그 처리 (Multi-select)
     if db_data.get("tags"):
         tag_list = []
@@ -500,7 +505,7 @@ def create_new_problem_page(title, db_data, concept_ids=None):
     # 개념 연결 (Relation)
     if concept_ids and isinstance(concept_ids, list):
         relation_list = [{"id": cid} for cid in concept_ids]
-        props[실전개념"] = {"relation": relation_list}
+        props["실전개념"] = {"relation": relation_list}
 
     payload = {"parent": {"database_id": NOTION_DATABASE_ID}, "properties": props}
     
