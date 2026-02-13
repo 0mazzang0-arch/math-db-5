@@ -119,3 +119,19 @@
 2026-02-14 00:23:49,034 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
 2026-02-14 00:23:59,578 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 00:24:00,161 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 00:26:14,283 - INFO - 🔗 [Merged] '범위가 있는 중복조합' -> '범위가 있는 중복조합' 병합 완료.
+2026-02-14 00:26:14,531 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:26:15,292 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 00:26:15,295 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:26:16,660 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 00:26:16,664 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:26:18,070 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 200 None
+2026-02-14 00:42:37,253 - WARNING - ⚠️ [Suspect] '여사건을 이용한 순열과 조합' vs '같은 것이 있는 순열 vs 조합' (41%). 태그 부착 저장.
+2026-02-14 00:42:37,989 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:42:39,918 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 00:42:40,331 - INFO - ✨ [New] '포함-배제의 원리' 신규 등록.
+2026-02-14 00:42:40,589 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:42:41,202 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 00:42:41,204 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:42:42,259 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
+2026-02-14 00:42:42,262 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
