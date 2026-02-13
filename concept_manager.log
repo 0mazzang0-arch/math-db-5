@@ -95,3 +95,16 @@
 2026-02-13 23:41:24,187 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-13 23:41:25,594 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
 2026-02-13 23:41:25,598 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 23:41:27,743 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 200 None
+2026-02-13 23:53:10,508 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 23:53:18,645 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-13 23:53:29,058 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 23:53:29,602 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-13 23:56:37,919 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 23:56:38,828 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-13 23:56:38,831 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 23:56:39,252 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 400 228
+2026-02-13 23:56:40,254 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 23:56:40,733 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 400 228
+2026-02-13 23:56:41,738 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 23:56:42,151 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 400 228

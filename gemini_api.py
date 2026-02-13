@@ -166,6 +166,10 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 (Pixel-perfect transcription)
 [[VERBATIM_END]]
 
+[[CORRECT_ANSWER_START]]
+(Extracted final answer only, e.g., 3, 5, 149)
+[[CORRECT_ANSWER_END]]
+
 [[AI_SOLUTION_START]]
 (Standard solution)
 [[AI_SOLUTION_END]]
@@ -406,8 +410,10 @@ def parse_tagged_response(text):
     # --- 2. Body Content Extraction (Restored All Fields) ---
     print("  >> 본문 콘텐츠 및 그래프/기본개념 추출 중...")
     data["body_content"]["verbatim_handwriting"] = extract_section("[[VERBATIM_START]]", "[[VERBATIM_END]]", "Verbatim")
+    data["db_columns"]["correct_answer"] = extract_section("[[CORRECT_ANSWER_START]]", "[[CORRECT_ANSWER_END]]", "Correct Answer")
     data["body_content"]["ai_solution"] = extract_section("[[AI_SOLUTION_START]]", "[[AI_SOLUTION_END]]", "AI Solution")
     data["body_content"]["instructor_solution"] = extract_section("[[DEEP_INSIGHT_START]]", "[[DEEP_INSIGHT_END]]", "Insight")
+    
     
     data["body_content"]["strategy_overview"] = extract_section("[[STRATEGY_START]]", "[[STRATEGY_END]]", "Strategy")
     data["body_content"]["action_protocol"] = extract_section("[[ACTION_PROTOCOL_START]]", "[[ACTION_PROTOCOL_END]]", "ActionProtocol")

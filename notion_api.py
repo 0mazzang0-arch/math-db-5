@@ -726,14 +726,7 @@ def append_children(page_id, body_content):
     verbatim = body_content.get("verbatim_handwriting", "")
     if verbatim:
         all_blocks.append(make_heading_2("✍️ 선생님의 손필기 풀이 (Verbatim)"))
-        all_blocks.append({
-            "object": "block",
-            "type": "quote",
-            "quote": {
-                "rich_text": [{"type": "text", "text": {"content": verbatim[:2000]}}],
-                "color": "default"
-            }
-        })
+        all_blocks.append(make_quote_block(verbatim))
         all_blocks.append(make_text_block(" "))
 
     # -------------------------------------------------------
