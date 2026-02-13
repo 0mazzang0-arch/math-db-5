@@ -1839,7 +1839,7 @@ date: {current_time_str}
                 self.root.after(0, lambda: self.log("⚠️ [System] concept_sync.create_concept_page 함수를 찾을 수 없습니다."))
                 
         except Exception as e:
-            self.root.after(0, lambda: self.log(f"❌ [Sync Error] 실전개념 동기화 중 오류: {e}"))
+            self.root.after(0, lambda err=e: self.log(f"❌ [Sync Error] 실전개념 동기화 중 오류: {err}"))
 
 if __name__ == "__main__":
     backup_main_source_phase2()

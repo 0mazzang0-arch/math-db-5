@@ -15,3 +15,38 @@
 2026-02-13 18:03:41,008 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
 2026-02-13 18:03:52,075 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-13 18:03:52,674 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-13 19:50:12,021 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 19:53:34,818 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 19:53:39,510 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-13 19:54:16,419 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 19:54:16,901 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-13 21:07:58,572 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 21:08:09,445 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-13 21:13:39,324 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 21:13:39,855 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-13 21:15:08,911 - INFO - ✨ [New] '범위가 있는 중복조합' 신규 등록.
+2026-02-13 21:15:09,157 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 21:15:10,288 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-13 21:15:43,473 - INFO - ✨ [New] '[주제2] 같은 것을 다른 것에 나누어 주는 상황' 신규 등록.
+2026-02-13 21:16:04,181 - INFO - ✨ [New] '중복조합 부정방정식 사용가능한 상황' 신규 등록.
+2026-02-13 21:16:04,463 - DEBUG - tag: ImageWidth (256) - type: short (3) - value: b'\x06\xd8'
+2026-02-13 21:16:04,463 - DEBUG - tag: ImageLength (257) - type: short (3) - value: b'\n\xf0'
+2026-02-13 21:16:04,463 - DEBUG - tag: Software (305) - type: string (2) Tag Location: 46 - Data Location: 74 - value: <table: 40 bytes>
+2026-02-13 21:16:04,463 - DEBUG - tag: ExifIFD (34665) - type: long (4) - value: b'\x00\x00\x00r'
+2026-02-13 21:16:04,463 - DEBUG - tag: Orientation (274) - type: long (4) - value: b'\x00\x00\x00\x00'
+2026-02-13 21:17:48,494 - WARNING - ⚠️ [Suspect] '중복조합 부정방정식에서 미지수의 값의 범위의 조건' vs '중복조합 부정방정식 사용가능한 상황' (47%). 태그 부착 저장.
+2026-02-13 21:18:10,488 - WARNING - ⚠️ [Suspect] '중복조합 vs 같은 것이 있는 순열' vs '같은 것이 있는 순열 vs 조합' (61%). 태그 부착 저장.
+2026-02-13 21:18:41,828 - WARNING - ⚠️ [Suspect] '중복조합에서 부등식의 정수해 ⇒ 방정식으로!!' vs '중복조합 부정방정식 사용가능한 상황' (52%). 태그 부착 저장.
+2026-02-13 21:19:45,068 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 21:19:55,535 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-13 21:20:07,276 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 21:20:07,777 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-13 21:26:24,421 - INFO - 🔗 [Merged] '범위가 있는 중복조합' -> '범위가 있는 중복조합' 병합 완료.
+2026-02-13 21:26:24,666 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 21:26:25,367 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-13 21:26:25,371 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 21:26:25,896 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 400 254
+2026-02-13 21:26:26,899 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 21:26:27,538 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 400 254
+2026-02-13 21:26:28,541 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-13 21:26:28,973 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 400 254

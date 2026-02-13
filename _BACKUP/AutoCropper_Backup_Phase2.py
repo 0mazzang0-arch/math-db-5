@@ -7,6 +7,13 @@ import re
 import json
 import io
 import time
+import shutil
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+import config
 
 # --- 라이브러리 임포트 및 예외처리 ---
 import fitz  # PyMuPDF
@@ -28,8 +35,8 @@ except ImportError:
 # =========================================================
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# [설정] 기본 작업 경로 (Config 대체)
-DEFAULT_WORK_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "AutoCropper_Work")
+# [설정] 기본 작업 경로 (config.py 연동)
+DEFAULT_WORK_DIR = config.WORK_STAGING_DIR
 if not os.path.exists(DEFAULT_WORK_DIR):
     try: os.makedirs(DEFAULT_WORK_DIR)
     except: pass
@@ -38,6 +45,15 @@ if not os.path.exists(DEFAULT_WORK_DIR):
 GOOGLE_API_KEY_HARDCODED = "AIzaSyBO9106GmrTWQYTrwzeDbM_d-F1n9gMlGs" 
 MODEL_NAME = "gemini-3-flash-preview"
 # =========================================================
+
+def backup_autocropper_source_phase2():
+    backup_dir = os.path.join(os.path.dirname(__file__), "_BACKUP")
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, "AutoCropper_Backup_Phase2.py")
+    try:
+        shutil.copy2(__file__, backup_path)
+    except Exception:
+        pass
 
 class MainApplication(tk.Tk):
     def __init__(self):
@@ -391,6 +407,34 @@ class SsenCutterTab:
         tk.Button(lf_run, text="🔍 진단(Scan)", command=lambda: self.run(mode="scan"), bg="#2196F3", fg="white").pack(fill="x", pady=2)
         tk.Button(lf_run, text="🚀 실행(Cut)", command=lambda: self.run(mode="cut"), bg="#d32f2f", fg="white", font=("bold", 12)).pack(fill="x")
 
+        # 7. MathBot 전송 패널 (Track 선택 + 안전 전송)
+        lf_transfer = tk.LabelFrame(left, text="6. MathBot 전송 패널", bg="#f0f0f0", padx=5, pady=5)
+        lf_transfer.pack(fill="x", padx=5, pady=5)
+
+        self.transfer_track_var = tk.StringVar(value="B")
+        tk.Radiobutton(
+            lf_transfer,
+            text="Track A (심층 분석)",
+            variable=self.transfer_track_var,
+            value="A",
+            bg="#f0f0f0"
+        ).pack(anchor="w")
+        tk.Radiobutton(
+            lf_transfer,
+            text="Track B (빠른 수집)",
+            variable=self.transfer_track_var,
+            value="B",
+            bg="#f0f0f0"
+        ).pack(anchor="w")
+        tk.Button(
+            lf_transfer,
+            text="🚀 전송 시작",
+            command=self.transfer_to_mathbot,
+            bg="#388E3C",
+            fg="white",
+            font=("bold", 10)
+        ).pack(fill="x", pady=4)
+
         # [오른쪽]
         right = tk.PanedWindow(self.root, orient="vertical")
         right.pack(side="right", fill="both", expand=True)
@@ -649,6 +693,45 @@ class SsenCutterTab:
             os.startfile(self.save_dir)
 
     def log(self, s): self.log_text.insert(tk.END, s+"\n"); self.log_text.see(tk.END)
+
+    def _resolve_nonconflicting_path(self, target_dir, filename):
+        base_name, ext = os.path.splitext(filename)
+        candidate = os.path.join(target_dir, filename)
+        copy_idx = 1
+        while os.path.exists(candidate):
+            candidate = os.path.join(target_dir, f"{base_name}_copy{copy_idx}{ext}")
+            copy_idx += 1
+        return candidate
+
+    def transfer_to_mathbot(self):
+        source_dir = config.WORK_STAGING_DIR
+        selected_track = self.transfer_track_var.get()
+
+        if selected_track == "A":
+            target_dir = config.DEEP_WATCH_DIR
+            track_label = "Track A"
+        else:
+            target_dir = config.FAST_WATCH_DIR
+            track_label = "Track B"
+
+        os.makedirs(source_dir, exist_ok=True)
+        os.makedirs(target_dir, exist_ok=True)
+
+        image_exts = (".png", ".jpg", ".jpeg")
+        entries = [f for f in os.listdir(source_dir) if f.lower().endswith(image_exts)]
+        moved_count = 0
+
+        for name in entries:
+            src_path = os.path.join(source_dir, name)
+            if not os.path.isfile(src_path):
+                continue
+
+            dst_path = self._resolve_nonconflicting_path(target_dir, name)
+            shutil.move(src_path, dst_path)
+            moved_count += 1
+
+        messagebox.showinfo("전송 완료", f"총 {moved_count}개 파일 전송 완료 ({track_label})")
+
     def open_pdf(self):
         f = filedialog.askopenfilename()
         if not f: return
@@ -701,5 +784,6 @@ class SsenCutterTab:
             self.canvas.create_text(sx1, sy1, anchor="sw", text=str(i+1), fill="red", font=("bold", 12), tags="region_text")
 
 if __name__ == "__main__":
+    backup_autocropper_source_phase2()
     app = MainApplication()
     app.mainloop()

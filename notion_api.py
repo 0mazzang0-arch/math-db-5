@@ -544,7 +544,14 @@ def update_page_properties(page_id, db_data, concept_ids=None):
     res = robust_request("PATCH", url, payload)
     if res and res.status_code == 200: return True, "성공"
     return False, res.text if res else "Update Failed"
+def make_heading_2(text, color="default"):
+    return {"object": "block", "type": "heading_2", "heading_2": {"rich_text": make_rich_text_list(text), "color": color}}
 
+def make_text_block(text):
+    return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": make_rich_text_list(text)}}
+
+def make_callout(text, icon="💡"):
+    return {"object": "block", "type": "callout", "callout": {"rich_text": make_rich_text_list(text), "icon": {"emoji": icon}}}
 # ==========================================================
 # [Core Logic 4] 본문 내용 생성 (The Body Builder) - V30
 # ==========================================================
