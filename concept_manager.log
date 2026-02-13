@@ -196,3 +196,11 @@
 2026-02-14 02:37:45,010 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 02:37:46,156 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
 2026-02-14 02:37:46,159 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:37:48,446 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-8153-9d56-c50bbfe36592/children HTTP/1.1" 200 None
+2026-02-14 02:40:11,686 - WARNING - ⚠️ [Suspect] '여사건과 포함-배제의 원리' vs '포함-배제의 원리' (77%). 태그 부착 저장.
+2026-02-14 02:40:12,391 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:40:13,121 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 02:40:13,123 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:40:14,018 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
+2026-02-14 02:40:14,021 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:40:16,005 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81bb-b295-d663476b2e6b/children HTTP/1.1" 200 None
