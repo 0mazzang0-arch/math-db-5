@@ -1826,7 +1826,7 @@ date: {current_time_str}
             # concept_sync.py에 있는 생성 함수 호출 (이미지 URL 포함)
             # 이제 MathBot이 혼자만 알지 않고 Notion에 보고합니다.
             if hasattr(concept_sync, 'create_concept_page'):
-                page_id = concept_sync.create_concept_page(title, content, image_url)
+                page_id = concept_sync.create_concept_page(concept_data, image_url)
                 
                 if page_id:
                     # 전송 성공 시 매핑 테이블(제목->ID) 갱신

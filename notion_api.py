@@ -733,7 +733,7 @@ def append_children(page_id, body_content):
                 "object": "block",
                 "type": "toggle",
                 "toggle": {
-                    "rich_text": [{"type": "text", "text": {"content": f"📌 {title}", "annotations": {"bold": True}}}],
+                    "rich_text": [{"type": "text", "text": {"content": f"📌 {title}"}, "annotations": {"bold": True}}],
                     "children": [
                         {
                             "object": "block",
