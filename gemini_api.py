@@ -28,15 +28,15 @@ USE_GPT_FALLBACK = False
 # ==========================================================
 TAGGED_SYSTEM_PROMPT = r"""
 # Role Definition
-You are a "Forensic Mathematical Logic Auditor" (디지털 포렌식 수학 논리 감사관).
-Your duty is to extract content from handwritten math solutions with **Zero Tolerance for Omission** and **Absolute Structure Adherence**.
+You are a "Forensic Mathematical Logic Auditor" (디지털 포렌식 수학 논리 감사관) and a "Top-Tier Mathematical Strategist".
+Your duty is to extract content from handwritten math solutions with **Zero Tolerance for Omission**, and then independently generate universal mathematical strategies.
 
 **CORE DIRECTIVE (THE PRIME DIRECTIVE):**
 1. **NO SUMMARIZATION:** You are FORBIDDEN from summarizing. You must transcribe every detail.
 2. **NO INTERPRETATION IN DB:** Do not interpret implied meanings for the Database columns. Extract only what is explicitly marked.
-3. **SEPARATION OF CONCERNS:**
-   * Explicit Markers (`[...]`, `㊄`, `㊕`) -> Go to **Teacher's Decoding Tags**.
-   * Logical Flow (`->`) -> Go to **Action Protocol**.
+3. **SEPARATION OF CONCERNS (CRITICAL - SEPARATION OF BRAINS):**
+   * The user's handwriting (arrows `->`, notes, symbols) represents the **"Teacher's View"**. All of it goes into `SECTION A`. Do NOT steal user's handwritten logic to create AI strategies.
+   * The `ACTION_PROTOCOL` and `STRATEGY` represent the **"AI's Independent Brain"**. You must generate this from scratch based purely on the mathematical nature of the problem text.
    * Handwriting -> Go to **Verbatim**.
 
    ### [CRITICAL ADDITION] ANSWER EXTRACTION
@@ -48,15 +48,16 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 
 # [PART 1] DETAILED EXTRACTION PROTOCOLS
 
-## SECTION A: TEACHER'S DECODING (Teacher's View)
+## SECTION A: TEACHER'S DECODING (Teacher's View - 100% User Dependent)
 **CRITICAL CHANGE:** For the following tags, you MUST use the format: `Symbol | Content | AI_Interpretation`
-* **Symbol:** The mark used by the teacher (e.g., 🎯, ⚡, ❗, 🔑, ①, (가)).
+* **Symbol:** The mark used by the teacher (e.g., 🎯, ⚡, ❗, 🔑, ①, (가), or arrows `->`).
 * **Content:** The verbatim handwritten text next to the symbol.
 * **AI_Interpretation:** Your mathematical explanation of what this implies.
 
 ### 1. NECESSITY (필연성) - `[[NECESSITY]]`
-* **Trigger:** `[...]` or `(필)`.
-* **Format:** `[Symbol] | [Text inside brackets] | [Why is this necessary?]`
+* **Trigger:** Text followed by an arrow (`->`), `[...]`, or `(필)`.
+* **Instruction:** ALL logical flows and arrows drawn by the user MUST be captured here. This is the Teacher's thought process.
+* **Format:** `[Symbol/Arrow] | [Text inside brackets or pointed to] | [Why is this necessary?]`
 
 ### 2. KEY IDEA (핵심) - `[[KEY_IDEA]]`
 * **Trigger:** `㊄`, `(핵)`, or `🔑`.
@@ -76,13 +77,15 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 
 ---
 
-## SECTION B: BODY CONTENT & SUPPLEMENTARY
+## SECTION B: BODY CONTENT & SUPPLEMENTARY (AI's Independent Brain)
 
 ### 1. ACTION PROTOCOL - `[[ACTION_PROTOCOL]]`
-* **Target:** Logical arrows (`->`). Format: `**[Trigger]** ... -> **[Action]** ...`
+* **Target:** THIS IS YOUR INDEPENDENT STRATEGY. Do NOT copy the user's handwritten arrows here.
+* **Instruction:** Look at the original problem text. What is the universal heuristic for this *type* of problem?
+* **Format:** Write 2-3 bullet points of universal mathematical behavior rules (e.g., **[Trigger]** ... -> **[Action]** ...).
 
 ### 2. STRATEGY - `[[STRATEGY]]`
-* **Target:** Overall workflow. Substitute ① with actual meaning.
+* **Target:** Overall workflow. Substitute ① with actual meaning. (Independent of user's specific steps).
 
 ### 3. PRACTICAL CONCEPTS - `[[PRACTICAL_CONCEPTS]]`
 * **Trigger:** `㉦` or `(실)`. Format: `Title: ... || Content: ...`
@@ -94,7 +97,7 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 * **Target:** Description of graphs or geometric figures.
 
 ### 6. VERBATIM - `[[VERBATIM]]`
-* **Target:** ALL handwriting. Strict LaTeX. No Korean inside `$`.
+* **Target:** ALL handwriting. Strict LaTeX. No Korean inside `$`. Every pixel must be translated to LaTeX.
 
 ### 7. SUPPLEMENTARY LISTS (Safety Net)
 * **KEY_IDEAS_LIST:** If multiple key ideas exist, list them here too.
@@ -135,7 +138,7 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 [[CONDITIONS_END]]
 
 [[ACTION_PROTOCOL_START]]
-(AI's inferred logic)
+(AI's independent generalized strategy heuristics)
 [[ACTION_PROTOCOL_END]]
 
 [[STRATEGY_START]]
@@ -163,7 +166,7 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 [[AI_SOLUTION_END]]
 
 [[DEEP_INSIGHT_START]]
-(1-Tier Instructor's Insight)
+(Leave empty)
 [[DEEP_INSIGHT_END]]
 """
 
@@ -276,33 +279,32 @@ def parse_tagged_response(text):
     }
 
     # [Verbose Extraction Helper] - [복구 완료] 로그 및 부분 매칭 기능
-# ==========================================
-# 2. 원본 구조를 유지하되 유연성만 더한 파서
-# ==========================================
     def extract_section(start_tag, end_tag, debug_name):
         base_start = start_tag.replace("[", "").replace("]", "")
         base_end = end_tag.replace("[", "").replace("]", "")
         
-        # 정규식만 유연하게 변경 (대괄호 1~2개, 공백 허용)
-        pattern = r'\[{1,2}\s*' + base_start + r'\s*\]{1,2}(.*?)\[{1,2}\s*' + base_end + r'\s*\]{1,2}'
-        match = re.search(pattern, text, re.DOTALL)
+        # [핵심 수술] 괄호 [, ], 별표 *, 샵 # 기호가 섞여있어도 무조건 찾아내는 정규식 (대소문자 무시)
+        pattern = r'[\#\*\s\[\]]*' + base_start + r'[\#\*\s\[\]]*(.*?)[\#\*\s\[\]]*' + base_end + r'[\#\*\s\[\]]*'
+        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
         if match: return match.group(1).strip()
         
-        # Fallback: 루즈 매칭
-        pattern_loose = r'\[{1,2}\s*' + base_start + r'\s*\]{1,2}(.*)'
-        match_loose = re.search(pattern_loose, text, re.DOTALL)
+        # Fallback: 루즈 매칭 (종료 태그를 빼먹은 경우)
+        pattern_loose = r'[\#\*\s\[\]]*' + base_start + r'[\#\*\s\[\]]*(.*)'
+        match_loose = re.search(pattern_loose, text, re.DOTALL | re.IGNORECASE)
         if match_loose:
             content = match_loose.group(1).strip()
-            next_tag_match = re.search(r'\[{1,2}\s*[A-Z_]+_START\s*\]{1,2}', content)
+            # 다음 시작 태그가 나오기 전까지 잘라냄
+            next_tag_match = re.search(r'[\#\*\s\[\]]*[A-Z_]+_START[\#\*\s\[\]]*', content, re.IGNORECASE)
             if next_tag_match: return content[:next_tag_match.start()].strip()
             return content
             
         # 최후의 보루 (AI_SOLUTION 전용)
         if "AI_SOLUTION" in start_tag:
-            alt_match = re.search(r'#+\s*AI\s*(정석\s*)?해설(.*?)(?=#+|$)', text, re.DOTALL)
+            alt_match = re.search(r'#+\s*AI\s*(정석\s*)?해설(.*?)(?=#+|$)', text, re.DOTALL | re.IGNORECASE)
             if alt_match: return alt_match.group(2).strip()
             
         return ""
+
     def clean_list(raw_text):
         if not raw_text: return []
         lines = raw_text.split('\n')
@@ -493,9 +495,10 @@ def analyze_image_structure(image_path):
     base_sol = result_data.get("body_content", {}).get("ai_solution", "")
     
     # [Insight 생성 로직 보존]
-    if not result_data["body_content"]["instructor_solution"]:
-        deep_insight = generate_deep_insight(image_path, base_sol, concept_db_text) 
-        result_data["body_content"]["instructor_solution"] = deep_insight
+    # (주의) 파서가 더미 텍스트를 잡아와서 if문이 False가 되는 치명적 버그를 원천 차단함.
+    # 더미 텍스트가 있든 없든, 무조건 Stage 2 독립 에이전트를 가동하여 덮어씌움!
+    deep_insight = generate_deep_insight(image_path, base_sol, concept_db_text) 
+    result_data["body_content"]["instructor_solution"] = deep_insight
     
     print("✅ 분석 완료.")
     return result_data

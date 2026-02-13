@@ -552,6 +552,30 @@ def make_text_block(text):
 
 def make_callout(text, icon="💡"):
     return {"object": "block", "type": "callout", "callout": {"rich_text": make_rich_text_list(text), "icon": {"emoji": icon}}}
+def make_quote_block(text):
+    """
+    텍스트를 인용구(Quote) 블록으로 변환합니다. 
+    내부의 모든 LaTeX 수식이 완벽하게 노션 수식 객체로 렌더링되도록 강제합니다.
+    """
+    if not text or text.strip() == "":
+        return {
+            "object": "block",
+            "type": "quote",
+            "quote": {"rich_text": [{"type": "text", "text": {"content": " "}}]}
+        }
+        
+    # [핵심 수술 부위] 텍스트를 생으로 넣지 않고 반드시 수식 변환기를 거치게 함
+    rendered_rich_text = make_rich_text_list(text)
+    
+    # 만약 변환기가 실패해서 빈 배열이 오면 최소한의 공백이라도 넣어 에러 방지
+    if not rendered_rich_text:
+        rendered_rich_text = [{"type": "text", "text": {"content": " "}}]
+        
+    return {
+        "object": "block",
+        "type": "quote",
+        "quote": {"rich_text": rendered_rich_text}
+    }
 # ==========================================================
 # [Core Logic 4] 본문 내용 생성 (The Body Builder) - V30
 # ==========================================================
