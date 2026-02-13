@@ -173,3 +173,16 @@
 2026-02-14 02:33:41,518 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 02:33:43,028 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
 2026-02-14 02:33:43,032 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:33:45,204 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 200 None
+2026-02-14 02:35:57,078 - INFO - 🔗 [Merged] '칸막이 모델 (Stars and Bars)' -> '칸막이 모델 (Stars and Bars)' 병합 완료.
+2026-02-14 02:35:57,324 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:35:58,069 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 02:35:58,531 - INFO - 🔗 [Merged] '순서가 정해진 순열' -> '순서가 정해진 순열' 병합 완료.
+2026-02-14 02:35:58,780 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:35:59,330 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 02:35:59,828 - INFO - ✨ [New] '적극적 여사건 분류' 신규 등록.
+2026-02-14 02:36:00,092 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:36:00,710 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 02:36:00,712 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:36:01,934 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 02:36:01,937 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
