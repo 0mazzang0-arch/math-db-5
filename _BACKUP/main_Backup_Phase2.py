@@ -35,16 +35,6 @@ def ensure_dirs():
     if not os.path.exists(ERROR_DIR): os.makedirs(ERROR_DIR)
     if not os.path.exists(COMPLETED_DIR): os.makedirs(COMPLETED_DIR)
 
-
-def backup_main_source_phase2():
-    backup_dir = os.path.join(os.path.dirname(__file__), "_BACKUP")
-    os.makedirs(backup_dir, exist_ok=True)
-    backup_path = os.path.join(backup_dir, "main_Backup_Phase2.py")
-    try:
-        shutil.copy2(__file__, backup_path)
-    except Exception:
-        pass
-
 # ==========================================================
 # [Main Class] MathBot V27 Control Center (Full Integration)
 # ==========================================================
@@ -1076,7 +1066,6 @@ class AutoMathBot:
 
         try:
             while self.is_running:
-                processed_any = False
                 # ------------------------------------------------------------------
                 # [안전장치 1] 감시 폴더 존재 확인 (루트 폴더)
                 # ------------------------------------------------------------------
@@ -1103,7 +1092,6 @@ class AutoMathBot:
                 # ==================================================================================
                 if os.path.exists(config.DEEP_WATCH_DIR):
                     files_deep = [f for f in os.listdir(config.DEEP_WATCH_DIR) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
-                    if files_deep: processed_any = True
                     
                     # 1. 파일 스캔 루프
                     for img in files_deep:
@@ -1536,7 +1524,6 @@ class AutoMathBot:
                 # ==================================================================================
                 if os.path.exists(config.FAST_WATCH_DIR):
                     for root, dirs, files in os.walk(config.FAST_WATCH_DIR):
-                        if files: processed_any = True
                         for file in files:
                             if not self.is_running: break
                             
@@ -1764,7 +1751,6 @@ date: {current_time_str}
                 files_concept = [f for f in os.listdir(config.CONCEPT_WATCH_FOLDER) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
                 
                 if files_concept:
-                    processed_any = True
                     for img in files_concept:
                         if not self.is_running: break
                         path = os.path.join(config.CONCEPT_WATCH_FOLDER, img)
@@ -1793,10 +1779,7 @@ date: {current_time_str}
                         except Exception as e:
                             self.move_to_dir(path, ERROR_DIR, img)
                 
-                if processed_any:
-                    time.sleep(0.1) # 파일 감지 시 즉시 재스캔 (CPU 폭주 방지 최소 쿨타임)
-                else:
-                    time.sleep(2) # 유휴 시 CPU 휴식
+                time.sleep(2) # CPU 휴식
 
         except Exception as e:
             error_msg = f"스레드 치명적 충돌:\n{e}"
@@ -1842,7 +1825,6 @@ date: {current_time_str}
             self.root.after(0, lambda: self.log(f"❌ [Sync Error] 실전개념 동기화 중 오류: {e}"))
 
 if __name__ == "__main__":
-    backup_main_source_phase2()
     root = tk.Tk()
     app = AutoMathBot(root)
     root.mainloop()
