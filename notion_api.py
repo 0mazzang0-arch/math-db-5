@@ -262,20 +262,23 @@ def sync_db_to_memory(log_func=print):
                     edited_time = page["last_edited_time"]
                     props = page["properties"]
                     
-                    # 제목 추출 (안전하게)
-                    title_list = props.get("문제&풀이", {}).get("title", [])
-                    if not title_list: title_list = props.get("문제&풀이", {}).get("rich_text", [])
+# ----------------------------------------------------------------------------------------------------
+                    # [수술 부위] 공백 제목 무시 및 출처 컬럼 승격 로직 (Invisible Wall 방어)
+                    # ----------------------------------------------------------------------------------------------------
+                    title_obj = props.get("문제&풀이", {})
+                    t_list = title_obj.get("title", []) or title_obj.get("rich_text", [])
                     
-                    # 제목이 없으면 '출처' 컬럼에서 시도 (Track B 대비)
-                    if not title_list:
-                        source_props = props.get("출처", {})
-                        title_list = source_props.get("rich_text", [])
-                        if not title_list: title_list = source_props.get("title", [])
-                    
-                    if title_list:
-                        raw_title = title_list[0]["plain_text"]
-                        
-                        # 맵핑 테이블 실시간 갱신
+                    # 핵심: .strip()을 추가하여 공백만 있는 좀비 제목을 빈 문자열("")로 처리
+                    raw_title = t_list[0].get("plain_text", "").strip() if t_list else ""
+
+                    # 제목이 텅 비었다면(공백 포함) '출처' 컬럼을 제목으로 승격
+                    if not raw_title:
+                        src_obj = props.get("출처", {})
+                        s_list = src_obj.get("rich_text", []) or src_obj.get("title", [])
+                        if s_list: raw_title = s_list[0].get("plain_text", "").strip()
+
+                    if raw_title:
+                    # ----------------------------------------------------------------------------------------------------
                         norm_key = normalize_aggressive(raw_title)
                         FAST_LOOKUP_MAP[norm_key] = page_id
                         
@@ -358,7 +361,7 @@ def find_page_id(filename, debug=False):
 def make_rich_text_list(content):
     if not content: return []
     content = str(content)
-    
+    content = content.replace("\\\\", "\\")
     # [수정] Notion이 못 읽는 LaTeX 문서 태그 제거 및 변환 (청소 작업)
     content = re.sub(r'\\begin\{itemize\}', '', content)
     content = re.sub(r'\\end\{itemize\}', '', content)
@@ -550,8 +553,27 @@ def make_heading_2(text, color="default"):
 def make_text_block(text):
     return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": make_rich_text_list(text)}}
 
+# ----------------------------------------------------------------------------------------------------
+# [수술 부위 2] 400 Error (Limit 100) 방어용 Callout 생성기 (리스트 반환)
+# Insight 내용이 길어 수식 조각이 100개를 넘으면, 여러 개의 Callout 블록으로 쪼개서 반환합니다.
+# ----------------------------------------------------------------------------------------------------
 def make_callout(text, icon="💡"):
-    return {"object": "block", "type": "callout", "callout": {"rich_text": make_rich_text_list(text), "icon": {"emoji": icon}}}
+    full_rich_text = make_rich_text_list(text)
+    if not full_rich_text: return []
+
+    # 안전하게 90개씩 끊어서 블록 분할 (Notion 제한: 100개)
+    chunk_size = 90
+    chunks = [full_rich_text[i:i + chunk_size] for i in range(0, len(full_rich_text), chunk_size)]
+    
+    blocks = []
+    for chunk in chunks:
+        blocks.append({
+            "object": "block", 
+            "type": "callout", 
+            "callout": {"rich_text": chunk, "icon": {"emoji": icon}}
+        })
+    return blocks
+# ----------------------------------------------------------------------------------------------------
 def make_quote_block(text):
     """
     텍스트를 인용구(Quote) 블록으로 변환합니다. 
@@ -773,7 +795,7 @@ def append_children(page_id, body_content):
     insight = body_content.get("instructor_solution", "")
     if insight:
         all_blocks.append(make_heading_2("🏆 1타 강사의 Insight", "yellow_background"))
-        all_blocks.append(make_callout(insight, "🔥"))
+        all_blocks.extend(make_callout(insight, "🔥"))
 
     # =======================================================
     # [Final Step] 블록 전송 (Batch Upload)

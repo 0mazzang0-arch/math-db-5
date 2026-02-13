@@ -108,3 +108,14 @@
 2026-02-13 23:56:40,733 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 400 228
 2026-02-13 23:56:41,738 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-13 23:56:42,151 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 400 228
+2026-02-14 00:11:30,558 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:11:35,865 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 00:11:47,263 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:11:48,089 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 00:13:52,632 - INFO - 🔗 [Merged] '범위가 있는 중복조합 (여사건)' -> '(중복의심) [78%] 범위가 있는 중복조합 (여사건 활용)' 병합 완료.
+2026-02-14 00:13:52,879 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:13:53,683 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 00:23:45,512 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:23:49,034 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 00:23:59,578 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 00:24:00,161 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
