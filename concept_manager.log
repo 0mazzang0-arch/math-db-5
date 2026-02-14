@@ -507,3 +507,10 @@
 2026-02-14 15:17:58,609 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 15:17:59,714 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
 2026-02-14 15:17:59,718 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:18:01,451 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 200 None
+2026-02-14 15:20:06,496 - INFO - 🔗 [Merged] '연속된 자연수의 성질' -> '연속된 자연수의 성질' 병합 완료.
+2026-02-14 15:20:06,751 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:20:07,413 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 15:20:07,415 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:20:08,592 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 15:20:08,595 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
