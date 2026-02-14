@@ -413,3 +413,9 @@
 2026-02-14 14:00:31,311 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
 2026-02-14 14:00:31,314 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 14:00:33,155 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-8153-9d56-c50bbfe36592/children HTTP/1.1" 200 None
+2026-02-14 14:02:35,832 - INFO - 🔗 [Merged] '범위가 있는 중복조합의 해결 전략' -> '(중복의심) [78%] 범위가 있는 중복조합의 해결 전략' 병합 완료.
+2026-02-14 14:02:36,075 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:02:36,711 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 14:02:36,713 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:02:37,522 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 14:02:37,526 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
