@@ -169,19 +169,19 @@ Example:
 (ABSOLUTE FORMAT: Evidence ▶ Conclusion. NOT a wall of text.)
 - Write as bullet points. EACH bullet MUST be a complete "근거 → 결론/행동" unit.
 - Strict template per bullet:
-  * **[키워드/단계]** (Evidence: 원문에서 보이는 조건/표식/식/메모를 짧게 지목 또는 인용) → **(Conclusion/Action: 수학적 결론 또는 다음 행동/도구)**
+  * **키워드/단계** (Evidence: 원문에서 보이는 조건/표식/식/메모를 짧게 지목 또는 인용) → **(Conclusion/Action: 수학적 결론 또는 다음 행동/도구)**
 - Rules (NO FUNCTIONAL SUMMARY / NO HALLUCINATION):
   1) Evidence 없는 결론 금지(추측 금지).
   2) 결론은 반드시 “무엇을 할지(행동/도구/치환/케이스 분류)”로 연결되어야 함.
   3) **NO FUNCTIONAL SUMMARY:** 케이스 분기, 변수 치환, 포함/배제, 중간 계산 결과를 **절대 생략하지 말 것**. (학생이 그대로 따라 적을 수 있을 정도로)
-  5) **MINIMUM STEPS:** 최소 8개의 bullet을 출력하라. 부족하면 케이스/치환/계산/결론을 쪼개서 bullet 수를 늘려라.
+  8) **MINIMUM STEPS:** 최소 8개의 bullet을 출력하라. 부족하면 케이스/치환/계산/결론을 쪼개서 bullet 수를 늘려라.
   4) 원문이 불명확하면 Evidence는 `Unknown`으로 표기하고, 임의로 채우지 말 것.
   5) **BRACKET PRESERVATION (ABSOLUTE):** 이미지/손필기에 대괄호 `[...]`가 보이면 Evidence에 반드시 **대괄호 포함 원문을 그대로 복사**하라. (삭제/의역/라벨 치환 금지)
   6) **NO LABEL SUBSTITUTION:** `[Necessity]` 같은 라벨로 대체하지 말고, 반드시 실제 `[ ... ]` 문장을 출력하라. (대괄호가 없다면 Unknown)
-
+  7) **BRACKET RESERVE RULE:** 대괄호 `[...]`는 오직 “필연성 본문(네가 쓴 형태: [원인 -> 결론])”에만 사용하라. 단계/제목 라벨에 대괄호 사용 금지.
 - Example:
-  * **[상황 파악]** “(가) 흰색 카드는 작은 수부터 크기순” (Evidence) → **순서열거가 아니라 ‘자리선택(조합)’으로 환원** (Conclusion)
-  * **[변수 세팅]** “(나) 검은 카드 사이 흰색 카드 ≥ 2장” (Evidence) → **y≥2 치환 후 Stars & Bars 적용** (Action)
+  * **상황 파악** “(가) 흰색 카드는 작은 수부터 크기순” (Evidence) → **순서열거가 아니라 ‘자리선택(조합)’으로 환원** (Conclusion)
+  * **변수 세팅** “(나) 검은 카드 사이 흰색 카드 ≥ 2장” (Evidence) → **y≥2 치환 후 Stars & Bars 적용** (Action)
 [[LOGIC_NARRATIVE_END]]
 
 

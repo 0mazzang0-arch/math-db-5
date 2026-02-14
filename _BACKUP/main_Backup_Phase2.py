@@ -1114,21 +1114,38 @@ class AutoMathBot:
                 # [Track A] 오답 분석 모드 (Deep Analysis)
                 # ==================================================================================
                 if os.path.exists(config.DEEP_WATCH_DIR):
-                    files_deep = [f for f in os.listdir(config.DEEP_WATCH_DIR) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
-                    if files_deep: processed_any = True
-                    
+                    # ✅ [재귀 탐색] 하위 폴더까지 이미지 찾기
+                    deep_image_paths = []
+                    for root, dirs, files in os.walk(config.DEEP_WATCH_DIR):
+                        for f in files:
+                            if f.lower().endswith(('.jpg', '.png', '.jpeg')):
+                                deep_image_paths.append(os.path.join(root, f))
+
+                    if deep_image_paths: processed_any = True
+
                     # 1. 파일 스캔 루프
-                    for img in files_deep:
+                    for path in deep_image_paths:
                         if not self.is_running: break
-                        path = os.path.join(config.DEEP_WATCH_DIR, img)
-                        
+
+                        img = os.path.basename(path)
+                        root_dir = os.path.dirname(path)
+
+                        # ✅ [태그] Deep 폴더 바로 아래 하위폴더명을 태그로 사용
+                        # 예: ...\[1]_오답분석_Deep\뉴런\파일.jpg  -> folder_tag="뉴런"
+                        # Deep 바로 아래면 태그 없음("")
+                        if os.path.normpath(root_dir) == os.path.normpath(config.DEEP_WATCH_DIR):
+                            folder_tag = ""
+                        else:
+                            folder_tag = os.path.basename(root_dir)
+
                         # [Debouncing] 파일 전송 안정화 대기
                         try:
                             s1 = os.path.getsize(path); time.sleep(0.5)
                             if s1 != os.path.getsize(path): continue
                         except: continue
-                        
+
                         name_base, ext = os.path.splitext(img)
+
 
                         # --- [Merge Logic: 대기열 관리] ---------------------------------
                         
