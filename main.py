@@ -998,7 +998,7 @@ class AutoMathBot:
                     page_id, msg = notion_api.create_new_problem_page(new_title, json_data.get("db_columns", {}), detected_concept_ids)
                     
                     if page_id:
-                        notion_api.append_children(page_id, json_data.get("body_content", {}))
+                        notion_api.safe_append_children(page_id, json_data.get("body_content", {}))
                         self.root.after(0, lambda t=new_title: self.log(f"✨ [생성] {t}"))
                         
                         # [MD 파일 생성] - 기존의 안전장치(Overwrite vs New) 로직 100% 유지
@@ -1032,7 +1032,7 @@ class AutoMathBot:
                     page_id, err = notion_api.find_page_id(best_file)
                     if page_id:
                         notion_api.update_page_properties(page_id, json_data.get("db_columns", {}), concept_ids=detected_concept_ids)
-                        notion_api.append_children(page_id, json_data.get("body_content", {}))
+                        notion_api.safe_append_children(page_id, json_data.get("body_content", {}))
                         self.root.after(0, lambda: self.log(f"✅ Notion 업데이트 완료"))
                     else:
                         self.root.after(0, lambda: self.log(f"❌ 노션 페이지 매칭 거부: {err}"))
@@ -1347,7 +1347,7 @@ class AutoMathBot:
                                 new_title = os.path.splitext(img)[0]
                                 page_id, msg = notion_api.create_new_problem_page(new_title, json_data.get("db_columns", {}), detected_concept_ids)
                                 if page_id:
-                                    notion_api.append_children(page_id, json_data.get("body_content", {}))
+                                    notion_api.safe_append_children(page_id, json_data.get("body_content", {}))
                                     self.root.after(0, lambda t=new_title: self.log(f"✨ [생성] {t}"))
                                     
                                     # MD 파일 생성
@@ -1391,7 +1391,7 @@ class AutoMathBot:
                                 if page_id:
                                     notion_api.update_page_properties(page_id, json_data.get("db_columns", {}), concept_ids=detected_concept_ids)
                                     # Notion은 기본적으로 Append 방식
-                                    notion_api.append_children(page_id, json_data.get("body_content", {}))
+                                    notion_api.safe_append_children(page_id, json_data.get("body_content", {}))
                                     self.root.after(0, lambda: self.log(f"✅ Notion 업데이트 완료"))
                                 else:
                                     self.root.after(0, lambda: self.log(f"❌ 매칭 실패: {err}"))
@@ -1544,7 +1544,7 @@ class AutoMathBot:
                                 new_title = os.path.splitext(img)[0]
                                 page_id, msg = notion_api.create_new_problem_page(new_title, json_data.get("db_columns", {}), detected_concept_ids)
                                 if page_id:
-                                    notion_api.append_children(page_id, json_data.get("body_content", {}))
+                                    notion_api.safe_append_children(page_id, json_data.get("body_content", {}))
                                     self.root.after(0, lambda t=new_title: self.log(f"✨ [Timeout] 생성: {t}"))
                                     
                                     # MD 생성 로직
@@ -1576,7 +1576,7 @@ class AutoMathBot:
                                 page_id, err = notion_api.find_page_id(best_file)
                                 if page_id:
                                     notion_api.update_page_properties(page_id, json_data.get("db_columns", {}), concept_ids=detected_concept_ids)
-                                    notion_api.append_children(page_id, json_data.get("body_content", {}))
+                                    notion_api.safe_append_children(page_id, json_data.get("body_content", {}))
                                     self.root.after(0, lambda: self.log(f"✅ [Timeout] 업데이트 완료"))
                                 else:
                                     self.move_to_dir(path, ERROR_DIR, img)
@@ -1774,7 +1774,7 @@ class AutoMathBot:
                                                 "ai_solution": f"## 해설\n{a_text}" if a_text else "해설 없음",
                                                 "verbatim_handwriting": "Track B 자동 수집 모드", "image_url": ""
                                             }
-                                            notion_api.append_children(page_id, body_content)
+                                            notion_api.safe_append_children(page_id, body_content)
                                             
                                             current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                                             md_content = f"""---
