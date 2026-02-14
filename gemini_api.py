@@ -90,9 +90,9 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 
 ---
 
-## STEP 2: LOGIC NARRATIVE (Contextual Substitution)
-**Goal:** Create a `[[LOGIC_NARRATIVE]]`.
-**Instruction:** Combine the following logic sections. **You MUST use the symbols defined in STEP 1.**
+## STEP 2: LOGIC NARRATIVE (Evidence-Based Substitution)
+**Goal:** Create a `[[LOGIC_NARRATIVE]]` as an evidence-backed proof flow.
+**Instruction:** Use symbols from STEP 1, and write every step in "Evidence → Conclusion/Action" form (NO hallucination, NO missing links).
 
 # 👇 [여기서부터 덮어씌우세요 (화살표 조건 삭제 -> 대괄호 절대 규칙 적용)] 👇
 ### 1. NECESSITY (필연성) -> [[LOGIC_NARRATIVE]]
@@ -166,10 +166,20 @@ Example:
 [[SYMBOL_TABLE_END]]
 
 [[LOGIC_NARRATIVE_START]]
-(Format: Bullet points with Variable Substitution.)
-Example:
-* **[상황 파악]** 문제의 조건 **①(음이 아닌 정수)**과 **②(합이 14)**를...
+(ABSOLUTE FORMAT: Evidence ▶ Conclusion. NOT a wall of text.)
+- Write as bullet points. EACH bullet MUST be a complete "근거 → 결론/행동" unit.
+- Strict template per bullet:
+  * **[키워드/단계]** (Evidence: 원문에서 보이는 조건/표식/식/메모를 짧게 지목 또는 인용) → **(Conclusion/Action: 수학적 결론 또는 다음 행동/도구)**
+- Rules (NO FUNCTIONAL SUMMARY / NO HALLUCINATION):
+  1) Evidence 없는 결론 금지(추측 금지).
+  2) 결론은 반드시 “무엇을 할지(행동/도구/치환/케이스 분류)”로 연결되어야 함.
+  3) 계산 디테일을 전부 늘어놓지 말고, **논리 흐름(필연성)** 중심으로 연결하되, 필요한 핵심 계산 결과는 포함해도 됨.
+  4) 원문이 불명확하면 Evidence는 `Unknown`으로 표기하고, 임의로 채우지 말 것.
+- Example:
+  * **[상황 파악]** “(가) 흰색 카드는 작은 수부터 크기순” (Evidence) → **순서열거가 아니라 ‘자리선택(조합)’으로 환원** (Conclusion)
+  * **[변수 세팅]** “(나) 검은 카드 사이 흰색 카드 ≥ 2장” (Evidence) → **y≥2 치환 후 Stars & Bars 적용** (Action)
 [[LOGIC_NARRATIVE_END]]
+
 
 # -------------------------------------------------------
 # [LEGACY TAGS FOR PARSER COMPATIBILITY - DO NOT OMIT]
