@@ -536,6 +536,49 @@ def update_page_properties(page_id, db_data, concept_ids=None):
         "핵심 아이디어": {"rich_text": [{"type": "text", "text": {"content": str(key)}}]},
         "특이점": {"rich_text": [{"type": "text", "text": {"content": str(spe)}}]},
     }
+
+    def _get_existing_page_tags(target_page_id):
+        """기존 페이지의 '태그' multi_select 이름 목록 조회"""
+        get_url = f"https://api.notion.com/v1/pages/{target_page_id}"
+        res = robust_request("GET", get_url)
+        if not res or res.status_code != 200:
+            return None
+        try:
+            props = res.json().get("properties", {})
+            tag_items = props.get("태그", {}).get("multi_select", [])
+            return [item.get("name", "") for item in tag_items if item.get("name")]
+        except Exception:
+            return None
+
+    if "tags" in db_data:
+        existing_tags = _get_existing_page_tags(page_id)
+
+        raw_tags = db_data.get("tags")
+        if isinstance(raw_tags, str):
+            new_tags = [t.strip() for t in re.split(r"[,/\n]", raw_tags)]
+        elif isinstance(raw_tags, list):
+            new_tags = [str(t).strip() for t in raw_tags]
+        else:
+            new_tags = []
+
+        merged_tags = []
+        seen_keys = set()
+
+        for t in (existing_tags or []):
+            normalized_key = re.sub(r"\s+", "", str(t)).lower()
+            if normalized_key and normalized_key not in seen_keys:
+                seen_keys.add(normalized_key)
+                merged_tags.append(str(t).strip())
+
+        for t in new_tags:
+            cleaned = str(t).strip()
+            normalized_key = re.sub(r"\s+", "", cleaned).lower()
+            if normalized_key and normalized_key not in seen_keys:
+                seen_keys.add(normalized_key)
+                merged_tags.append(cleaned)
+
+        if existing_tags is not None:
+            properties["태그"] = {"multi_select": [{"name": tag} for tag in merged_tags]}
     
     if concept_ids and isinstance(concept_ids, list):
         relation_list = [{"id": cid} for cid in concept_ids]
