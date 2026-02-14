@@ -1284,27 +1284,27 @@ class AutoMathBot:
                                 self.move_to_dir(path, ERROR_DIR, img)
                                 continue
 # [Robust Logic] 부모 폴더명을 추출하여 태그로 사용합니다.
-                                try:
-                                    # 👇 [디버그용 추가] 이 줄을 복사해서 붙여넣으세요 👇
-                                    self.root.after(0, lambda p=path: self.log(f"🧭 [Tag Debug] path={p} | parent={os.path.basename(os.path.dirname(p))} | deep_root={os.path.basename(config.DEEP_WATCH_DIR)}"))
+                            try:
+                                # 👇 [디버그용 추가] 이 줄을 복사해서 붙여넣으세요 👇
+                                self.root.after(0, lambda p=path: self.log(f"🧭 [Tag Debug] path={p} | parent={os.path.basename(os.path.dirname(p))} | deep_root={os.path.basename(config.DEEP_WATCH_DIR)}"))
+                                
+                                parent_folder_path = os.path.dirname(path)
+                                parent_folder_name = os.path.basename(parent_folder_path).strip()
+                                
+                                # 감시 루트 폴더 이름과 다르고, 유효한 문자열일 경우에만 태그로 인정
+                                if parent_folder_name and parent_folder_name != os.path.basename(config.DEEP_WATCH_DIR):
+                                    # json_data 내부에 db_columns 구조가 없으면 강제로 생성
+                                    if "db_columns" not in json_data:
+                                        json_data["db_columns"] = {}
+                                    if "tags" not in json_data["db_columns"] or not isinstance(json_data["db_columns"]["tags"], list):
+                                        json_data["db_columns"]["tags"] = []
                                     
-                                    parent_folder_path = os.path.dirname(path)
-                                    parent_folder_name = os.path.basename(parent_folder_path).strip()
-                                    
-                                    # 감시 루트 폴더 이름과 다르고, 유효한 문자열일 경우에만 태그로 인정
-                                    if parent_folder_name and parent_folder_name != os.path.basename(config.DEEP_WATCH_DIR):
-                                        # json_data 내부에 db_columns 구조가 없으면 강제로 생성
-                                        if "db_columns" not in json_data:
-                                            json_data["db_columns"] = {}
-                                        if "tags" not in json_data["db_columns"] or not isinstance(json_data["db_columns"]["tags"], list):
-                                            json_data["db_columns"]["tags"] = []
-                                        
-                                        # 중복 방지 후 태그 추가
-                                        if parent_folder_name not in json_data["db_columns"]["tags"]:
-                                            json_data["db_columns"]["tags"].append(parent_folder_name)
-                                            self.root.after(0, lambda tn=parent_folder_name: self.log(f"🏷️ [Auto Tag] 폴더명 태그 추가: {tn}"))
-                                except Exception as e_tag:
-                                    self.root.after(0, lambda err=e_tag: self.log(f"⚠️ [Tag Error] 폴더 태그 추가 실패 (무시하고 진행): {err}"))
+                                    # 중복 방지 후 태그 추가
+                                    if parent_folder_name not in json_data["db_columns"]["tags"]:
+                                        json_data["db_columns"]["tags"].append(parent_folder_name)
+                                        self.root.after(0, lambda tn=parent_folder_name: self.log(f"🏷️ [Auto Tag] 폴더명 태그 추가: {tn}"))
+                            except Exception as e_tag:
+                                self.root.after(0, lambda err=e_tag: self.log(f"⚠️ [Tag Error] 폴더 태그 추가 실패 (무시하고 진행): {err}"))
 # ▲▲▲ [여기까지 붙여넣기] ▲▲▲
                             # 3. 개념 ID 추출
                             detected_concept_ids = []
@@ -1486,24 +1486,24 @@ class AutoMathBot:
                                 self.move_to_dir(path, ERROR_DIR, img)
                                 continue
 # [Robust Logic] 타임아웃된 파일 태그 처리
-                                try:
-                                    # 👇 [디버그용 추가 2] 여기도 똑같이 붙여넣으세요 👇
-                                    self.root.after(0, lambda p=path: self.log(f"🧭 [Tag Debug-Timeout] path={p} | parent={os.path.basename(os.path.dirname(p))} | deep_root={os.path.basename(config.DEEP_WATCH_DIR)}"))
+                            try:
+                                # 👇 [디버그용 추가 2] 여기도 똑같이 붙여넣으세요 👇
+                                self.root.after(0, lambda p=path: self.log(f"🧭 [Tag Debug-Timeout] path={p} | parent={os.path.basename(os.path.dirname(p))} | deep_root={os.path.basename(config.DEEP_WATCH_DIR)}"))
+                                
+                                parent_folder_path_to = os.path.dirname(path)
+                                parent_folder_name_to = os.path.basename(parent_folder_path_to).strip()
+                                
+                                if parent_folder_name_to and parent_folder_name_to != os.path.basename(config.DEEP_WATCH_DIR):
+                                    if "db_columns" not in json_data:
+                                        json_data["db_columns"] = {}
+                                    if "tags" not in json_data["db_columns"] or not isinstance(json_data["db_columns"]["tags"], list):
+                                        json_data["db_columns"]["tags"] = []
                                     
-                                    parent_folder_path_to = os.path.dirname(path)
-                                    parent_folder_name_to = os.path.basename(parent_folder_path_to).strip()
-                                    
-                                    if parent_folder_name_to and parent_folder_name_to != os.path.basename(config.DEEP_WATCH_DIR):
-                                        if "db_columns" not in json_data:
-                                            json_data["db_columns"] = {}
-                                        if "tags" not in json_data["db_columns"] or not isinstance(json_data["db_columns"]["tags"], list):
-                                            json_data["db_columns"]["tags"] = []
-                                        
-                                        if parent_folder_name_to not in json_data["db_columns"]["tags"]:
-                                            json_data["db_columns"]["tags"].append(parent_folder_name_to)
-                                            self.root.after(0, lambda tn=parent_folder_name_to: self.log(f"🏷️ [Auto Tag-Timeout] 폴더명 태그 추가: {tn}"))
-                                except Exception as e_tag_to:
-                                    self.root.after(0, lambda err=e_tag_to: self.log(f"⚠️ [Tag Error-Timeout] 폴더 태그 추가 실패 (무시하고 진행): {err}"))
+                                    if parent_folder_name_to not in json_data["db_columns"]["tags"]:
+                                        json_data["db_columns"]["tags"].append(parent_folder_name_to)
+                                        self.root.after(0, lambda tn=parent_folder_name_to: self.log(f"🏷️ [Auto Tag-Timeout] 폴더명 태그 추가: {tn}"))
+                            except Exception as e_tag_to:
+                                self.root.after(0, lambda err=e_tag_to: self.log(f"⚠️ [Tag Error-Timeout] 폴더 태그 추가 실패 (무시하고 진행): {err}"))
 # ▲▲▲ [여기까지 붙여넣기] ▲▲▲
                             # 3. Concept ID
                             detected_concept_ids = []

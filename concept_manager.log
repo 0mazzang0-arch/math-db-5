@@ -725,3 +725,25 @@
 2026-02-14 21:07:53,266 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
 2026-02-14 21:08:03,560 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 21:08:04,432 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 21:11:42,464 - INFO - 🔗 [Merged] '칸막이 모델과 중복조합' -> '(중복의심) [42%] 칸막이 모델과 중복조합' 병합 완료.
+2026-02-14 21:11:42,700 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 21:11:43,347 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 21:11:43,349 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 21:11:44,056 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 21:11:44,060 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 21:11:45,994 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-812d-bd37-e9ef1b478ea0/children HTTP/1.1" 200 None
+2026-02-14 21:18:56,795 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 21:19:08,778 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 21:22:40,332 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 21:22:41,272 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 21:26:16,127 - INFO - 🔗 [Merged] '칸막이 모델과 중복조합' -> '(중복의심) [42%] 칸막이 모델과 중복조합' 병합 완료.
+2026-02-14 21:26:16,379 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 21:26:16,982 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 21:26:17,401 - INFO - 🔗 [Merged] '순서가 정해진 순열' -> '순서가 정해진 순열' 병합 완료.
+2026-02-14 21:26:17,660 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 21:26:18,353 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 21:26:18,355 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 21:26:19,428 - DEBUG - https://api.notion.com:443 "GET /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 21:26:19,430 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 21:26:21,643 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 21:26:21,647 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
