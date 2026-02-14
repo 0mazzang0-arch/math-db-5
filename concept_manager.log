@@ -608,3 +608,14 @@
 2026-02-14 17:43:34,144 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-812d-bd37-e9ef1b478ea0/children HTTP/1.1" 200 None
 2026-02-14 17:45:24,026 - INFO - 🔗 [Merged] '시행 횟수의 변수화 (Modeling Operations)' -> '(중복의심) [47%] 시행 횟수의 변수화 (Modeling Operations)' 병합 완료.
 2026-02-14 17:45:24,272 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 17:45:24,913 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 17:45:24,915 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 17:45:25,597 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
+2026-02-14 17:45:25,600 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 17:45:27,925 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-8153-9d56-c50bbfe36592/children HTTP/1.1" 200 None
+2026-02-14 17:47:49,187 - INFO - 🔗 [Merged] '여사건의 이용' -> '(중복의심) [55%] 여사건의 이용' 병합 완료.
+2026-02-14 17:47:49,436 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 17:47:50,161 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 17:47:50,164 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 17:47:50,926 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
+2026-02-14 17:47:50,930 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
