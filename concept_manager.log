@@ -430,3 +430,4 @@
 2026-02-14 14:18:09,845 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 14:18:10,536 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
 2026-02-14 14:18:10,541 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:18:13,001 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81bb-b295-d663476b2e6b/children HTTP/1.1" 200 None
