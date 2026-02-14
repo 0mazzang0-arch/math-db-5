@@ -121,19 +121,26 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 
 **Generate output strictly in KOREAN.**
 
+[[STRATEGY_START]]
+(Step-by-step Roadmap: 1. ... 2. ...)
+[[STRATEGY_END]]
+
 [[SYMBOL_TABLE_START]]
-(Format: Symbol | Meaning)
+(Format: Symbol | Meaning | AI Comment)
 Example:
-① | a,b,c는 음이 아닌 정수
-(핵) | 중복조합(H)의 활용
+① | a,b,c는 음이 아닌 정수 | 변수 범위 제한 확인 필수
+(핵) | 중복조합(H)의 활용 | 서로 다른 n개에서 중복 허용 r개 선택
 [[SYMBOL_TABLE_END]]
 
 [[LOGIC_NARRATIVE_START]]
-(Format: Bullet points with Variable Substitution. Translate arrows `->` into sentences.)
+(Format: Bullet points with Variable Substitution.)
 Example:
-* **[상황 파악]** 문제의 조건 **①(음이 아닌 정수)**과 **②(합이 14)**를 보았을 때, 이는 전형적인 **(핵)(중복조합)** 문제임.
-* **[필연적 행동]** 따라서 **[필연성](방정식의 해 구하기)** 논리에 따라 $3H_{14}$를 계산하려 했으나, **(특)(0이 아님)** 조건 때문에 여사건을 도입함.
+* **[상황 파악]** 문제의 조건 **①(음이 아닌 정수)**과 **②(합이 14)**를...
 [[LOGIC_NARRATIVE_END]]
+
+[[ACTION_PROTOCOL_START]]
+(Final Conclusion/Rule: "If pattern X, do Y")
+[[ACTION_PROTOCOL_END]]
 
 [[PRACTICAL_CONCEPTS_START]]
 (Format: Title: ... || Content: ...)
@@ -291,26 +298,29 @@ def parse_tagged_response(text):
     }
 
     # [Verbose Extraction Helper] - [복구 완료] 로그 및 부분 매칭 기능
-    def extract_section(start_tag, end_tag, debug_name):
+    def extract_section(start_tag, end_tag, debug_name=None):
+        # 1. 태그 정규화
         base_start = start_tag.replace("[", "").replace("]", "")
         base_end = end_tag.replace("[", "").replace("]", "")
         
-        # [핵심 수술] 괄호 [, ], 별표 *, 샵 # 기호가 섞여있어도 무조건 찾아내는 정규식 (대소문자 무시)
+        # 2. [Core] 정석 매칭 (괄호, 공백, 특수문자 무시하고 태그 찾기)
         pattern = r'[\#\*\s\[\]]*' + base_start + r'[\#\*\s\[\]]*(.*?)[\#\*\s\[\]]*' + base_end + r'[\#\*\s\[\]]*'
         match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
         if match: return match.group(1).strip()
         
-        # Fallback: 루즈 매칭 (종료 태그를 빼먹은 경우)
+        # 3. [Safety Net 1] Fallback (종료 태그를 AI가 빼먹었을 때)
+        # 시작 태그부터... 다음 'START' 태그가 나오기 전까지 몽땅 긁어옴
         pattern_loose = r'[\#\*\s\[\]]*' + base_start + r'[\#\*\s\[\]]*(.*)'
         match_loose = re.search(pattern_loose, text, re.DOTALL | re.IGNORECASE)
         if match_loose:
             content = match_loose.group(1).strip()
-            # 다음 시작 태그가 나오기 전까지 잘라냄
+            # 다음 섹션의 시작 태그가 보이면 거기서 자른다.
             next_tag_match = re.search(r'[\#\*\s\[\]]*[A-Z_]+_START[\#\*\s\[\]]*', content, re.IGNORECASE)
             if next_tag_match: return content[:next_tag_match.start()].strip()
             return content
             
-        # 최후의 보루 (AI_SOLUTION 전용)
+        # 4. [Safety Net 2] Last Resort (AI 해설 전용)
+        # 태그가 완전히 깨졌을 때 한글 키워드 'AI 해설'로 찾기
         if "AI_SOLUTION" in start_tag:
             alt_match = re.search(r'#+\s*AI\s*(정석\s*)?해설(.*?)(?=#+|$)', text, re.DOTALL | re.IGNORECASE)
             if alt_match: return alt_match.group(2).strip()
@@ -373,17 +383,25 @@ def parse_tagged_response(text):
         return items
 
 # 1. [STEP 1] Symbol Table 파싱
-    raw_symbols = extract_section("SYMBOL_TABLE_START", "SYMBOL_TABLE_END", "Symbol")
+    raw_symbols = extract_section("SYMBOL_TABLE_START", "SYMBOL_TABLE_END")
     symbol_list = []
     if raw_symbols:
         for line in raw_symbols.split('\n'):
             if "|" in line:
-                parts = line.split("|", 1)
-                symbol_list.append({"symbol": parts[0].strip(), "meaning": parts[1].strip()})
+                parts = [p.strip() for p in line.split("|")]
+                if len(parts) >= 2:
+                    sym = parts[0]
+                    mean = parts[1]
+                    comment = parts[2] if len(parts) > 2 else "" # 3번째 칸(주석) 확보
+                    symbol_list.append({"symbol": sym, "meaning": mean, "comment": comment})
     data["body_content"]["symbol_table"] = symbol_list
 
+    # [신규 복구] 전략 로드맵 & 행동 강령 추출
+    data["body_content"]["strategy_overview"] = extract_section("STRATEGY_START", "STRATEGY_END")
+    data["body_content"]["action_protocol"] = extract_section("ACTION_PROTOCOL_START", "ACTION_PROTOCOL_END")
+
     # 2. [STEP 2] Logic Narrative 파싱
-    raw_logic = extract_section("LOGIC_NARRATIVE_START", "LOGIC_NARRATIVE_END", "Logic")
+    raw_logic = extract_section("LOGIC_NARRATIVE_START", "LOGIC_NARRATIVE_END")
     data["body_content"]["logic_narrative"] = parse_list(raw_logic)
 
     # 3. [Safety Nets] 독립 리스트 파싱

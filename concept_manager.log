@@ -204,3 +204,105 @@
 2026-02-14 02:40:14,018 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
 2026-02-14 02:40:14,021 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 02:40:16,005 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81bb-b295-d663476b2e6b/children HTTP/1.1" 200 None
+2026-02-14 02:50:31,754 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:50:36,892 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 02:54:15,282 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 02:54:15,916 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 03:03:01,040 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:03:05,748 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 03:03:14,646 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:03:15,228 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 03:12:05,522 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:12:10,467 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 03:12:20,145 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:12:20,747 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 03:15:27,156 - WARNING - ⚠️ [Suspect] '범위가 있는 중복조합 (부정방정식의 해)' vs '범위가 있는 중복조합' (72%). 태그 부착 저장.
+2026-02-14 03:15:27,588 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:15:28,265 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 03:15:28,267 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:15:28,927 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 03:20:24,325 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:20:27,861 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 03:23:56,777 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:23:57,362 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 03:27:04,918 - INFO - 🔗 [Merged] '범위가 있는 중복조합 (여사건 활용)' -> '(중복의심) [78%] 범위가 있는 중복조합 (여사건 활용)' 병합 완료.
+2026-02-14 03:27:05,173 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:27:05,818 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 03:27:05,821 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:27:07,008 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 03:28:33,063 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:28:37,423 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 03:28:49,589 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:28:50,187 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 03:32:41,406 - WARNING - ⚠️ [Suspect] '범위가 있는 중복조합의 해결 전략' vs '범위가 있는 중복조합' (78%). 태그 부착 저장.
+2026-02-14 03:32:41,827 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:32:42,952 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 03:32:42,954 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:32:44,204 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 03:34:54,624 - WARNING - ⚠️ [Suspect] '순서가 정해진 순열의 해석' vs '순서가 정해진 순열' (84%). 태그 부착 저장.
+2026-02-14 03:34:55,224 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:34:55,877 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 03:34:56,173 - WARNING - ⚠️ [Suspect] '칸막이 모델과 중복조합' vs '범위가 있는 중복조합' (42%). 태그 부착 저장.
+2026-02-14 03:34:56,597 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:34:57,242 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 03:34:57,244 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:34:58,993 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 03:36:33,453 - WARNING - ⚠️ [Suspect] '시행 횟수의 변수화 (중복조합 모델링)' vs '시행 횟수의 변수화' (69%). 태그 부착 저장.
+2026-02-14 03:36:34,091 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:36:34,719 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 03:36:34,722 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:36:36,905 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
+2026-02-14 03:54:04,025 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:54:07,715 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 03:57:44,906 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:57:45,572 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 03:59:53,723 - INFO - 🔗 [Merged] '범위가 있는 중복조합 (여사건 활용)' -> '(중복의심) [78%] 범위가 있는 중복조합 (여사건 활용)' 병합 완료.
+2026-02-14 03:59:53,971 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:59:54,614 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 03:59:54,616 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 03:59:55,947 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 04:01:56,329 - INFO - 🔗 [Merged] '칸막이 모델과 중복조합' -> '(중복의심) [42%] 칸막이 모델과 중복조합' 병합 완료.
+2026-02-14 04:01:56,586 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:01:57,293 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 04:01:57,733 - INFO - 🔗 [Merged] '순서가 정해진 순열' -> '순서가 정해진 순열' 병합 완료.
+2026-02-14 04:01:57,980 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:01:59,071 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 04:01:59,074 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:02:00,182 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 04:03:52,280 - WARNING - ⚠️ [Suspect] '시행 횟수의 변수화 (Modeling Operations)' vs '시행 횟수의 변수화' (47%). 태그 부착 저장.
+2026-02-14 04:03:52,843 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:03:53,710 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 04:03:54,244 - INFO - 🔗 [Merged] '낯선 상황 해결 전략' -> '낯선 상황 해결 전략' 병합 완료.
+2026-02-14 04:03:54,499 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:03:55,220 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 04:03:55,223 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:03:56,559 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
+2026-02-14 04:06:24,816 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:06:26,166 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
+2026-02-14 04:13:31,221 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:13:35,174 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 04:16:36,114 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:16:36,715 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 04:19:30,354 - INFO - 🔗 [Merged] '범위가 있는 중복조합의 해결 전략' -> '(중복의심) [78%] 범위가 있는 중복조합의 해결 전략' 병합 완료.
+2026-02-14 04:19:30,603 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:19:31,478 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 04:19:31,481 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:19:32,155 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 04:21:43,781 - INFO - 🔗 [Merged] '순서가 정해진 순열의 해석' -> '(중복의심) [84%] 순서가 정해진 순열의 해석' 병합 완료.
+2026-02-14 04:21:44,031 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:21:44,693 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 04:21:45,199 - INFO - 🔗 [Merged] '칸막이 모델과 중복조합' -> '(중복의심) [42%] 칸막이 모델과 중복조합' 병합 완료.
+2026-02-14 04:21:45,450 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:21:46,267 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 04:21:46,269 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 04:21:48,010 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 12:09:22,938 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:09:32,595 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 12:12:52,526 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:12:53,211 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 12:16:44,205 - WARNING - ⚠️ [Suspect] '범위가 있는 중복조합의 해결 (Bounded Composition)' vs '(중복의심) [78%] 범위가 있는 중복조합의 해결 전략' (54%). 태그 부착 저장.
+2026-02-14 12:16:44,880 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:16:45,515 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 12:16:45,518 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:16:46,653 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 12:16:46,658 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443

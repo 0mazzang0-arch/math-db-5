@@ -606,30 +606,38 @@ def make_quote_block(text):
 # [V35 Renderer] 누락되었던 렌더링 헬퍼 함수 복구
 # ----------------------------------------------------------------------------------
 def make_symbol_table(symbol_list):
-    """ [Step 1] 기호 정의 테이블 생성 """
+    """ [Step 1] 기호 정의 테이블 생성 (3열: 기호 | 의미 | AI 주석) """
     if not symbol_list: return None
+    
     table_rows = []
-    # Header
+    # Header (3열)
     table_rows.append({
         "type": "table_row",
         "table_row": {
             "cells": [
                 [{"text": {"content": "기호 (Symbol)", "link": None}, "annotations": {"bold": True, "color": "blue"}}],
-                [{"text": {"content": "의미 (Definition & Variable)", "link": None}, "annotations": {"bold": True, "color": "blue"}}]
+                [{"text": {"content": "의미 (Definition)", "link": None}, "annotations": {"bold": True, "color": "blue"}}],
+                [{"text": {"content": "AI 주석 (Comment)", "link": None}, "annotations": {"bold": True, "color": "gray"}}]
             ]
         }
     })
-    # Body
+    # Body (3열 데이터 매핑)
     for item in symbol_list:
         sym = item.get("symbol", "")
         mean = item.get("meaning", "")
+        comment = item.get("comment", "")
         table_rows.append({
             "type": "table_row",
             "table_row": {
-                "cells": [make_rich_text_list(sym), make_rich_text_list(mean)]
+                "cells": [
+                    make_rich_text_list(sym),
+                    make_rich_text_list(mean),
+                    make_rich_text_list(comment)
+                ]
             }
         })
-    return {"object": "block", "type": "table", "table": {"table_width": 2, "has_column_header": True, "children": table_rows}}
+
+    return {"object": "block", "type": "table", "table": {"table_width": 3, "has_column_header": True, "children": table_rows}}
 
 def make_logic_narrative_blocks(narrative_list):
     """ [Step 2] 논리 서술 블록 생성 """
@@ -723,6 +731,10 @@ def append_children(page_id, body_content):
     def sanitize_blocks_recursive(blocks):
         clean_blocks = []
         for block in blocks:
+            # ✅ [디버그/방어] dict가 아니면 원인 출력하고 건너뜀
+            if not isinstance(block, dict):
+                print(f"⚠️ [Notion Block TypeError] block is {type(block)} -> {block}")
+                continue
             # 1. Rich Text 검사
             for type_key in ["paragraph", "heading_1", "heading_2", "heading_3", "callout", "quote", "bulleted_list_item", "numbered_list_item"]:
                 if type_key in block and "rich_text" in block[type_key]:
@@ -768,42 +780,42 @@ def append_children(page_id, body_content):
         })
     
     # -------------------------------------------------------
+    # [0.5] 🗺️ 전체 전략 (Strategy Map) - [신규 배치: 최상단]
     # -------------------------------------------------------
-    # 2. 🧠 선생님의 시선 (Teacher's Decoding V31)
+    strategy = body_content.get("strategy_overview", "")
+    if strategy:
+        all_blocks.append(make_heading_2("🗺️ 전체 전략 (Strategy Map)"))
+        all_blocks.append(make_callout(strategy, "🧭"))
+        all_blocks.append(make_text_block(" "))
+
     # -------------------------------------------------------
-    # [Step 1] 기호 정의 (Symbol Table)
+    # 2. 🧠 선생님의 시선 (Teacher's Decoding V35)
+    # -------------------------------------------------------
     symbol_data = body_content.get("symbol_table", [])
     logic_data = body_content.get("logic_narrative", [])
     
     if symbol_data or logic_data:
         all_blocks.append(make_heading_2("🧠 선생님의 시선 (Teacher's Decoding)", "blue_background"))
         
-        # 2-1. 기호 정의 테이블
+        # 2-1. 기호 정의 테이블 (3열)
         if symbol_data:
             all_blocks.append(make_text_block("📌 기호 정의 (Symbol Map)"))
-            s_table = make_symbol_table(symbol_data)
-            if s_table: all_blocks.append(s_table)
+            all_blocks.append(make_symbol_table(symbol_data))
             all_blocks.append(make_text_block(" "))
 
         # 2-2. 논리 서술 (이야기)
         if logic_data:
             all_blocks.append(make_text_block("📝 논리적 풀이 흐름 (Logic Narrative)"))
-            l_blocks = make_logic_narrative_blocks(logic_data)
-            all_blocks.extend(l_blocks)
+            all_blocks.extend(make_logic_narrative_blocks(logic_data))
             all_blocks.append(make_text_block(" "))
 
     # -------------------------------------------------------
-    # 3. 🤖 행동 강령 & 전략 (Action Protocol & Algorithm)
+    # [2.5] ⚡ 행동 강령 (Action Protocol) - [신규 배치: 서술 직후]
     # -------------------------------------------------------
-    strategy = body_content.get("strategy_overview", "")
     protocol = body_content.get("action_protocol", "")
-    
-    if strategy or protocol:
-        all_blocks.append(make_heading_2("🤖 AI가 제안하는 필연성 & 행동강령"))
-        if strategy:
-            all_blocks.append(make_text_block(f"🗺️ 전략 로드맵:\n{strategy}"))
-        if protocol:
-            all_blocks.append(make_text_block(f"⚡ AI가 제안하는 필연성 & 행동강령:\n{protocol}"))
+    if protocol:
+        all_blocks.append(make_heading_2("⚡ 행동 강령 (Action Protocol)"))
+        all_blocks.append(make_callout(protocol, "🚀"))
         all_blocks.append(make_text_block(" "))
 
     # -------------------------------------------------------
@@ -864,8 +876,19 @@ def append_children(page_id, body_content):
     # =======================================================
     # [Final Step] 블록 전송 (Batch Upload)
     # =======================================================
-    # 전송 전 최종 소독
-    final_children = sanitize_blocks_recursive([c for c in all_blocks if c])
+    
+    # ✅ [응급처치 & 무적 방어막] all_blocks 안에 list가 섞여 있으면 평탄화
+    flattened = []
+    for b in all_blocks:
+        if not b:
+            continue
+        if isinstance(b, list):
+            flattened.extend(b)
+        else:
+            flattened.append(b)
+
+    # 전송 전 최종 소독 (all_blocks 대신 flattened를 넣습니다)
+    final_children = sanitize_blocks_recursive(flattened)
     
     batch_size = 90
     url = f"https://api.notion.com/v1/blocks/{page_id}/children"

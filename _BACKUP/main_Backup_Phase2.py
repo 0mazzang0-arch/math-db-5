@@ -926,16 +926,28 @@ class AutoMathBot:
                     self.move_to_dir(path, ERROR_DIR, img)
                     return
 
-                # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# ------------------------------------------------------------------
                 # 3. 개념 ID (Concept ID)
                 # ------------------------------------------------------------------
                 detected_concept_ids = []
-                if "practical_concepts" in json_data.get("body_content", {}):
-                    for c in json_data["body_content"]["practical_concepts"]:
-                        self.process_single_concept(c) 
-                        title_key = c.get('title', '').replace(" ", "")
-                        if title_key in self.concept_map:
-                            detected_concept_ids.append(self.concept_map[title_key])
+                pcs = json_data.get("body_content", {}).get("practical_concepts", [])
+                
+                # [진단용 덫] 도대체 뭐가 들어오고 있는지 확인
+                self.root.after(0, lambda p=pcs: self.log(f"🧪 pcs type={type(p)}, sample0={type(p[0]) if isinstance(p, list) and p else None}"))
+                
+                for c in pcs:
+                    if not isinstance(c, dict):
+                        self.root.after(0, lambda err=c: self.log(f"⚠️ [Loop Error] practical_concepts 요소 불량: {type(err)} -> {err}"))
+                        continue
+                    
+                    self.process_single_concept(c) 
+                    title_key = c.get('title', '').replace(" ", "")
+                    if title_key in self.concept_map:
+                        detected_concept_ids.append(self.concept_map[title_key])
+
+                # ------------------------------------------------------------------
+                # 4. GitHub & Body Content Packaging
 
                 # ------------------------------------------------------------------
                 # 4. GitHub & Body Content Packaging
@@ -1260,12 +1272,20 @@ class AutoMathBot:
 # ▲▲▲ [여기까지 붙여넣기] ▲▲▲
                             # 3. 개념 ID 추출
                             detected_concept_ids = []
-                            if "practical_concepts" in json_data.get("body_content", {}):
-                                for c in json_data["body_content"]["practical_concepts"]:
-                                    self.process_single_concept(c) 
-                                    title_key = c.get('title', '').replace(" ", "")
-                                    if title_key in self.concept_map:
-                                        detected_concept_ids.append(self.concept_map[title_key])
+                            pcs = json_data.get("body_content", {}).get("practical_concepts", [])
+                            
+                            # [진단용 덫] 도대체 뭐가 들어오고 있는지 확인
+                            self.root.after(0, lambda p=pcs: self.log(f"🧪 pcs type={type(p)}, sample0={type(p[0]) if isinstance(p, list) and p else None}"))
+                            
+                            for c in pcs:
+                                if not isinstance(c, dict):
+                                    self.root.after(0, lambda err=c: self.log(f"⚠️ [Loop Error] practical_concepts 요소 불량: {type(err)} -> {err}"))
+                                    continue
+                                
+                                self.process_single_concept(c) 
+                                title_key = c.get('title', '').replace(" ", "")
+                                if title_key in self.concept_map:
+                                    detected_concept_ids.append(self.concept_map[title_key])
 
                             # 4. GitHub & URL
                             repo_idx = 4 
@@ -1449,12 +1469,20 @@ class AutoMathBot:
 # ▲▲▲ [여기까지 붙여넣기] ▲▲▲
                             # 3. Concept ID
                             detected_concept_ids = []
-                            if "practical_concepts" in json_data.get("body_content", {}):
-                                for c in json_data["body_content"]["practical_concepts"]:
-                                    self.process_single_concept(c) 
-                                    title_key = c.get('title', '').replace(" ", "")
-                                    if title_key in self.concept_map:
-                                        detected_concept_ids.append(self.concept_map[title_key])
+                            pcs = json_data.get("body_content", {}).get("practical_concepts", [])
+                            
+                            # [진단용 덫] 도대체 뭐가 들어오고 있는지 확인
+                            self.root.after(0, lambda p=pcs: self.log(f"🧪 pcs type={type(p)}, sample0={type(p[0]) if isinstance(p, list) and p else None}"))
+                            
+                            for c in pcs:
+                                if not isinstance(c, dict):
+                                    self.root.after(0, lambda err=c: self.log(f"⚠️ [Loop Error] practical_concepts 요소 불량: {type(err)} -> {err}"))
+                                    continue
+                                
+                                self.process_single_concept(c) 
+                                title_key = c.get('title', '').replace(" ", "")
+                                if title_key in self.concept_map:
+                                    detected_concept_ids.append(self.concept_map[title_key])
 
                             # 4. GitHub
                             repo_idx = 4 
@@ -1814,6 +1842,9 @@ date: {current_time_str}
     # ▲▲▲▲▲ [여기까지 교체] ▲▲▲▲▲
 
     def process_single_concept(self, concept_data, image_url=None):
+        if not isinstance(concept_data, dict):
+            self.root.after(0, lambda d=concept_data: self.log(f"⚠️ [Type Error] process_single_concept 입력이 dict 아님: {type(d)} -> {d}"))
+            return None
         # 1. 로컬 저장 (내부 장부 기록 - 리스트 표시용)
         concept_manager.save_concept(concept_data)
         
