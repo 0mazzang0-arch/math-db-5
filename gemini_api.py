@@ -489,7 +489,9 @@ def parse_tagged_response(text):
     if raw_symbols:
         for line in raw_symbols.splitlines():
             line = line.strip()
-            if not line or line.startswith("Example") or line.startswith("("):
+            if not line or line.startswith("Example"):
+                continue
+            if line.startswith("(") and not line.startswith(("(가)", "(나)", "(다)", "(구)", "(핵)", "(특)")):
                 continue
             if "|" not in line:
                 # 포맷 깨진 줄도 보존 (누락 방지)
@@ -603,21 +605,25 @@ def parse_tagged_response(text):
     strict_necessity_contents = []
     for row in symbol_list:
         dtype = (row.get("type") or "").strip().lower()
+        symbol = (row.get("symbol") or "")
         content = (row.get("content") or "")
         ai_comment = (row.get("ai_comment") or "")
 
-        if dtype == "key":
+        is_key_symbol = any(token in symbol for token in ("(핵)", "㊄", "🔑"))
+        is_trap_symbol = any(token in symbol for token in ("(특)", "㊕", "❗"))
+
+        if dtype == "key" or is_key_symbol:
             if content and content.strip():
                 strict_key_contents.append(content)
             if ai_comment and ai_comment.strip():
                 strict_key_contents.append(ai_comment)
-        if dtype == "trap":
+        if dtype == "trap" or is_trap_symbol:
             if content and content.strip():
                 strict_trap_contents.append(content)
             if ai_comment and ai_comment.strip():
                 strict_trap_contents.append(ai_comment)
 
-        for source_text in (content, ai_comment):
+        for source_text in (symbol, content, ai_comment):
             if not source_text:
                 continue
             for bracket_text in re.findall(r"\[[^\[\]]+\]", source_text):
