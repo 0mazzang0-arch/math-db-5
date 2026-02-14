@@ -494,3 +494,16 @@
 2026-02-14 14:56:45,443 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 14:56:48,491 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-8153-9d56-c50bbfe36592/children HTTP/1.1" 200 None
 2026-02-14 14:59:24,244 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:59:25,459 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
+2026-02-14 14:59:25,462 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:59:27,010 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81bb-b295-d663476b2e6b/children HTTP/1.1" 200 None
+2026-02-14 15:13:20,211 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:13:25,423 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 15:13:37,327 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:13:38,051 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 15:17:57,749 - INFO - 🔗 [Merged] '범위가 있는 중복조합' -> '범위가 있는 중복조합' 병합 완료.
+2026-02-14 15:17:57,996 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:17:58,607 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 15:17:58,609 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:17:59,714 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 15:17:59,718 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443

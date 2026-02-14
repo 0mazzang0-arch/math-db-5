@@ -191,18 +191,27 @@ Example:
 
 
 [[NECESSITY_START]]
-(필연성: 반드시 채워라. 대괄호[...] 또는 (필) 또는 화살표 흐름을 근거로 논리 이유를 적어라. 없으면 Unknown)
-(Format 권장: Symbol | Content | AI_Interpretation)
+(필연성: 반드시 채워라. 아래 규칙으로 **SYMBOL_TABLE/Teacher's Decoding에서 직접 가져와라**. 없으면 Unknown)
+(RULE-N: 다음 중 하나라도 있으면 반드시 채운다)
+- **대괄호[...] 안 문장**은 1순위로 Necessity에 복사
+- **(필)** 표시가 있는 문장은 2순위로 Necessity에 복사
+- **화살표(->)로 연결된 원인→결과 문장**은 3순위로 Necessity에 복사
+- 위가 하나도 없더라도, Teacher's Decoding에서 **"type이 Condition이고 코멘트가 '따라서/그러므로/필연'류"**면 Necessity로 복사
+(Format 강제: 반드시 `Symbol | Content | AI_Interpretation` 여러 줄로 작성)
 [[NECESSITY_END]]
 
 [[KEY_IDEA_START]]
-(핵심 아이디어: (핵)/(㊄)/🔑 등을 근거로 핵심 도구를 적어라. 없으면 Unknown)
-(Format 권장: Symbol | Content | AI_Interpretation)
+(RULE-K1: Teacher's Decoding에서 symbol이 (핵) / ㊄ / 🔑 인 행이 **하나라도** 있으면, 그 행(들)을 그대로 Key Idea에 **반드시 복사**하라.)
+(RULE-K2: (핵) 표식이 없어도, Teacher's Decoding의 메모(OCR) 또는 Logic Narrative/Verbatim에 '중복조합/여사건/케이스분류/칸막이/Stars and Bars/포함-배제' 같은 **도구명**이 나타나면 그 줄을 Key Idea에 **반드시 복사**하라.)
+(OUTPUT MINIMUM: Key Idea는 최소 1줄 이상 출력하라. 근거가 전혀 없으면 `Unknown` 1줄을 출력하라. 태그를 비우지 말 것.)
+(Format 강제: `Symbol | Content | AI_Interpretation` 각 줄)
 [[KEY_IDEA_END]]
 
 [[SPECIAL_POINT_START]]
-(특이점/함정: (특)/(㊕)/❗ 등을 근거로 함정/예외를 적어라. 없으면 Unknown)
-(Format 권장: Symbol | Content | AI_Interpretation)
+(RULE-S1: Teacher's Decoding에서 symbol이 (특) / ㊕ / ❗ 인 행이 **하나라도** 있으면, 그 행(들)을 그대로 Special Point에 **반드시 복사**하라.)
+(RULE-S2: (특) 표식이 없어도, Teacher's Decoding의 메모(OCR) 또는 Logic Narrative/Verbatim에 '함정/주의/겹침/중복/배제 누락/케이스 누락/등호 포함 여부/0 포함 여부' 같은 **경고 메모**가 나타나면 그 줄을 Special Point에 **반드시 복사**하라.)
+(OUTPUT MINIMUM: Special Point는 최소 1줄 이상 출력하라. 근거가 전혀 없으면 `Unknown` 1줄을 출력하라. 태그를 비우지 말 것.)
+(Format 강제: `Symbol | Content | AI_Interpretation` 각 줄)
 [[SPECIAL_POINT_END]]
 
 [[GOAL_START]]
@@ -260,10 +269,15 @@ Example:
 [[SPECIAL_POINTS_LIST_END]]
 
 [[DB_COLUMNS_START]]
-If a legacy tag has non-Unknown content, you MUST reflect it into DB_COLUMNS (necessity/key_idea/special_point) with no omission. (Copy, do not summarize.)
-necessity: (Legacy Summary for DB)
-key_idea: (Legacy Summary for DB)
-special_point: (Legacy Summary for DB)
+ABSOLUTE RULE: DB_COLUMNS는 **요약이 아니라 복사**다. 아래 레거시 태그의 내용을 그대로 복붙하라. (Do NOT paraphrase. Do NOT shorten.)
+- necessity := [[NECESSITY_START]] 내부 내용 그대로 (태그 안이 Unknown이면 Unknown 그대로)
+- key_idea := [[KEY_IDEA_START]] 내부 내용 그대로 (Unknown이면 Unknown 그대로)
+- special_point := [[SPECIAL_POINT_START]] 내부 내용 그대로 (Unknown이면 Unknown 그대로)
+
+necessity: (여기에 necessity를 위 규칙대로 그대로 복사)
+key_idea: (여기에 key_idea를 위 규칙대로 그대로 복사)
+special_point: (여기에 special_point를 위 규칙대로 그대로 복사)
+correct_answer: (정답이 있으면 정답, 없으면 Unknown)
 [[DB_COLUMNS_END]]
 
 [[DEEP_INSIGHT_START]]
