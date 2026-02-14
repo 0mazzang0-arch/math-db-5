@@ -320,3 +320,13 @@
 2026-02-14 12:20:36,471 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 12:20:37,752 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
 2026-02-14 12:20:37,755 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:20:39,862 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-8153-9d56-c50bbfe36592/children HTTP/1.1" 200 None
+2026-02-14 12:22:47,707 - INFO - 🔗 [Merged] '여사건을 이용한 순열과 조합' -> '(중복의심) [41%] 여사건을 이용한 순열과 조합' 병합 완료.
+2026-02-14 12:22:47,949 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:22:48,615 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 12:22:49,048 - INFO - 🔗 [Merged] '포함-배제의 원리' -> '포함-배제의 원리' 병합 완료.
+2026-02-14 12:22:49,292 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:22:50,246 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 12:22:50,249 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:22:51,454 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
+2026-02-14 12:22:51,457 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
