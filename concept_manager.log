@@ -307,3 +307,16 @@
 2026-02-14 12:16:46,653 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
 2026-02-14 12:16:46,658 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 12:16:48,759 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 200 None
+2026-02-14 12:18:54,385 - INFO - ✨ [New] '연속된 자연수의 성질' 신규 등록.
+2026-02-14 12:18:54,641 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:18:55,279 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 12:18:55,281 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:18:56,412 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 12:18:56,415 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:18:58,379 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-812d-bd37-e9ef1b478ea0/children HTTP/1.1" 200 None
+2026-02-14 12:20:35,555 - INFO - 🔗 [Merged] '낯선 상황 해결 전략' -> '낯선 상황 해결 전략' 병합 완료.
+2026-02-14 12:20:35,797 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:20:36,469 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 12:20:36,471 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 12:20:37,752 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
+2026-02-14 12:20:37,755 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
