@@ -627,7 +627,17 @@ def parse_tagged_response(text):
             if not source_text:
                 continue
             for bracket_text in re.findall(r"\[[^\[\]]+\]", source_text):
+                if "메모" in bracket_text or "Note" in bracket_text or "note" in bracket_text:
+                    continue
                 strict_necessity_contents.append(bracket_text)
+
+    for logic_line in data["body_content"].get("logic_narrative", []):
+        if not logic_line:
+            continue
+        for bracket_text in re.findall(r"\[[^\[\]]+\]", logic_line):
+            if "메모" in bracket_text or "Note" in bracket_text or "note" in bracket_text:
+                continue
+            strict_necessity_contents.append(bracket_text)
 
     # ✅ DB 컬럼은 teacher_decoding 증거 기반 Strict 규칙으로만 저장
     data["db_columns"]["necessity"] = _to_db_index_string(strict_necessity_contents)
