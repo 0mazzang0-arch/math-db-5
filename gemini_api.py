@@ -569,6 +569,10 @@ def parse_tagged_response(text):
     legacy_key_idea = _clean_legacy_block(legacy_key_idea)
     legacy_special = _clean_legacy_block(legacy_special)
 
+    data["body_content"]["legacy_necessity_raw"] = legacy_necessity
+    data["body_content"]["legacy_key_idea_raw"] = legacy_key_idea
+    data["body_content"]["legacy_special_point_raw"] = legacy_special
+
     # Unknown 처리 표준화 (빈칸 방지)
     def _normalize_unknown(s: str) -> str:
         if not s or not s.strip():
