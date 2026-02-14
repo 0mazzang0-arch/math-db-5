@@ -4,6 +4,7 @@ import json
 import re
 import os
 import time
+import copy
 import difflib
 import unicodedata
 from datetime import datetime
@@ -757,6 +758,183 @@ def make_teacher_decoding_table(decoding_list):
         
     return table_block
 
+
+def _split_text_chunks(text, max_len=2000):
+    text = "" if text is None else str(text)
+    if len(text) <= max_len:
+        return [text]
+    return [text[i:i + max_len] for i in range(0, len(text), max_len)]
+
+
+def sanitize_blocks_recursive(blocks):
+    """
+    전송 직전 Notion 제한(문자열 2000자, 빈 수식 등)을 만족하도록 블록을 재귀 정리합니다.
+    표/행 구조는 절대 강등하지 않고 셀 내부 rich_text만 정리합니다.
+    """
+    if not isinstance(blocks, list):
+        return []
+
+    rich_text_owner_keys = [
+        "paragraph", "heading_1", "heading_2", "heading_3", "callout", "quote",
+        "bulleted_list_item", "numbered_list_item", "toggle", "to_do"
+    ]
+
+    def sanitize_rich_text_list(rich_text_list):
+        sanitized = []
+        for rt in (rich_text_list or []):
+            if not isinstance(rt, dict):
+                continue
+
+            rt_type = rt.get("type")
+            if rt_type == "equation":
+                expr = str(rt.get("equation", {}).get("expression", ""))
+                if not expr.strip():
+                    sanitized.append({"type": "text", "text": {"content": " "}})
+                    continue
+                expr_chunks = _split_text_chunks(expr, 2000)
+                if len(expr_chunks) > 1:
+                    print(f"🩹 [Notion Recover] action=split chunk=0 size={len(expr)}")
+                for expr_chunk in expr_chunks:
+                    new_rt = copy.deepcopy(rt)
+                    new_rt.setdefault("equation", {})["expression"] = expr_chunk
+                    sanitized.append(new_rt)
+
+            elif rt_type == "text":
+                text_obj = rt.get("text", {})
+                content = str(text_obj.get("content", ""))
+                if not content:
+                    continue
+                content_chunks = _split_text_chunks(content, 2000)
+                if len(content_chunks) > 1:
+                    print(f"🩹 [Notion Recover] action=split chunk=0 size={len(content)}")
+                for content_chunk in content_chunks:
+                    new_rt = copy.deepcopy(rt)
+                    new_rt.setdefault("text", {})["content"] = content_chunk
+                    sanitized.append(new_rt)
+
+            else:
+                sanitized.append(rt)
+
+        return sanitized or [{"type": "text", "text": {"content": " "}}]
+
+    clean_blocks = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            print(f"⚠️ [Notion Block TypeError] block is {type(block)} -> {str(block)[:80]}")
+            continue
+
+        block = copy.deepcopy(block)
+        block_type = block.get("type")
+
+        if block_type == "equation":
+            expr = str(block.get("equation", {}).get("expression", ""))
+            if not expr.strip():
+                continue
+            if len(expr) > 2000:
+                print(f"🩹 [Notion Recover] action=truncate chunk=0 size={len(expr)}")
+            block.setdefault("equation", {})["expression"] = expr[:2000]
+
+        for owner_key in rich_text_owner_keys:
+            if owner_key in block and isinstance(block[owner_key], dict) and "rich_text" in block[owner_key]:
+                block[owner_key]["rich_text"] = sanitize_rich_text_list(block[owner_key].get("rich_text", []))
+
+        if block_type == "table_row" and isinstance(block.get("table_row"), dict):
+            cells = block["table_row"].get("cells", [])
+            normalized_cells = []
+            for cell in cells:
+                normalized_cells.append(sanitize_rich_text_list(cell if isinstance(cell, list) else []))
+            block["table_row"]["cells"] = normalized_cells
+
+        for child_container_key in [block_type] + rich_text_owner_keys + ["table"]:
+            container = block.get(child_container_key)
+            if isinstance(container, dict) and "children" in container:
+                container["children"] = sanitize_blocks_recursive(container.get("children", []))
+
+        clean_blocks.append(block)
+
+    return clean_blocks
+
+
+def _patch_with_retry(url, payload, chunk_no, batch_size):
+    res = requests.patch(url, headers=HEADERS, json=payload)
+    if res.status_code == 200:
+        return res
+
+    if res.status_code == 429 or res.status_code in [500, 502, 503, 504]:
+        print(f"🩹 [Notion Recover] action=retry chunk={chunk_no} size={batch_size}")
+        time.sleep(1)
+        return requests.patch(url, headers=HEADERS, json=payload)
+
+    return res
+
+
+def _send_children_in_chunks(page_id, children_blocks, chunk_size):
+    url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+
+    for i in range(0, len(children_blocks), chunk_size):
+        batch = children_blocks[i:i + chunk_size]
+        payload = {"children": batch}
+        chunk_no = i // chunk_size + 1
+
+        res = _patch_with_retry(url, payload, chunk_no, len(batch))
+
+        if res.status_code == 200:
+            continue
+
+        if res.status_code == 400 and "archived" in res.text.lower():
+            restore_url = f"https://api.notion.com/v1/pages/{page_id}"
+            restore_res = requests.patch(restore_url, headers=HEADERS, json={"archived": False})
+            if restore_res.status_code == 200:
+                print(f"🩹 [Notion Recover] action=unarchive chunk={chunk_no} size={len(batch)}")
+                retry_res = _patch_with_retry(url, payload, chunk_no, len(batch))
+                if retry_res.status_code == 200:
+                    continue
+                print(f"❌ [Notion Fail] status={retry_res.status_code} err={retry_res.text[:300]}")
+                return False, (retry_res.text or "unknown error"), i
+
+            print(f"❌ [Notion Fail] status={restore_res.status_code} err={restore_res.text[:300]}")
+            return False, (restore_res.text or "unknown error"), i
+
+        print(f"❌ [Notion Fail] status={res.status_code} err={res.text[:300]}")
+        return False, (res.text or "unknown error"), i
+
+    return True, "성공", len(children_blocks)
+
+
+def safe_append_children(page_id, children_blocks):
+    """
+    Notion append 안정 래퍼:
+    - 100개 제한 회피(90 -> 50 -> 30 chunk)
+    - rich_text/equation 2000자 제한 정규화
+    - archived 자동 복구
+    - 최대 3회 시도(중복 업로드 방지)
+    """
+    if isinstance(children_blocks, dict):
+        children_blocks = build_children_blocks(children_blocks)
+
+    remaining_children = sanitize_blocks_recursive(children_blocks or [])
+    attempts = [90, 50, 30]
+    last_error = ""
+
+    for attempt_idx, chunk_size in enumerate(attempts, start=1):
+        if not remaining_children:
+            return True, "성공"
+
+        ok, msg, next_start = _send_children_in_chunks(page_id, remaining_children, chunk_size=chunk_size)
+        if ok:
+            return True, "성공"
+
+        last_error = msg
+        remaining_children = remaining_children[next_start:]
+        print(
+            f"🩹 [Notion Recover] action=retry chunk={attempt_idx} size={len(remaining_children)}"
+        )
+        if attempt_idx < len(attempts):
+            time.sleep(1)
+
+    return False, f"실패: {str(last_error)[:300]}"
+
+
 def append_children(page_id, body_content):
     """
     [핵심] 페이지 본문에 블록들을 순서대로 쌓아 올립니다.
@@ -770,41 +948,11 @@ def append_children(page_id, body_content):
     7. 🏆 Insight -> Callout
     """
     
-    # [Pre-flight Check] 블록 데이터 소독 (빈 수식 제거 등)
-    def sanitize_blocks_recursive(blocks):
-        clean_blocks = []
-        for block in blocks:
-            # ✅ [디버그/방어] dict가 아니면 원인 출력하고 건너뜀
-            if not isinstance(block, dict):
-                print(f"⚠️ [Notion Block TypeError] block is {type(block)} -> {block}")
-                continue
-            # 1. Rich Text 검사
-            for type_key in ["paragraph", "heading_1", "heading_2", "heading_3", "callout", "quote", "bulleted_list_item", "numbered_list_item"]:
-                if type_key in block and "rich_text" in block[type_key]:
-                    new_rich_text = []
-                    for rt in block[type_key]["rich_text"]:
-                        if rt.get("type") == "equation":
-                            expr = rt.get("equation", {}).get("expression", "")
-                            if not expr or not str(expr).strip():
-                                new_rich_text.append({"type": "text", "text": {"content": " "}})
-                            else: new_rich_text.append(rt)
-                        elif rt.get("type") == "text":
-                            content = rt.get("text", {}).get("content", "")
-                            if content: new_rich_text.append(rt)
-                        else: new_rich_text.append(rt)
-                    
-                    if not new_rich_text:
-                        new_rich_text = [{"type": "text", "text": {"content": " "}}]
-                    block[type_key]["rich_text"] = new_rich_text
+    final_children = build_children_blocks(body_content)
+    return safe_append_children(page_id, final_children)
 
-            # 2. Block Equation 검사
-            if block.get("type") == "equation":
-                expr = block.get("equation", {}).get("expression", "")
-                if not expr or not str(expr).strip(): continue
 
-            clean_blocks.append(block)
-        return clean_blocks
-
+def _build_children_blocks_impl(body_content):
     all_blocks = []
     
     # -------------------------------------------------------
@@ -983,61 +1131,8 @@ def append_children(page_id, body_content):
         else:
             flattened.append(b)
 
-    # 전송 전 최종 소독 (all_blocks 대신 flattened를 넣습니다)
-    final_children = sanitize_blocks_recursive(flattened)
-    
-    batch_size = 90
-    url = f"https://api.notion.com/v1/blocks/{page_id}/children"
-    
-    is_all_success = True
-    
-    for i in range(0, len(final_children), batch_size):
-        batch = final_children[i:i + batch_size]
-        payload = {"children": batch}
-        
-        success_chunk = False
-        last_error = ""
-        
-        # [복구 완료] Retry Logic with Unarchive Handling
-        for attempt in range(3):
-            try:
-                res = requests.patch(url, headers=HEADERS, json=payload)
-                
-                if res.status_code == 200:
-                    success_chunk = True
-                    break 
-                
-                # [Error Handling] Archived Error -> 페이지 복구 시도
-                elif res.status_code == 400 and "archived" in res.text.lower():
-                    print(f"💀 [Notion] 페이지가 삭제됨(Archived) 감지. 강제 복구(Unarchive) 시도 중...")
-                    restore_url = f"https://api.notion.com/v1/pages/{page_id}"
-                    restore_payload = {"archived": False}
-                    restore_res = requests.patch(restore_url, headers=HEADERS, json=restore_payload)
-                    
-                    if restore_res.status_code == 200:
-                        print(f"🧟 [Notion] 페이지 복구 성공! 블록 전송 재시도...")
-                        time.sleep(1)
-                        continue 
-                    else:
-                        print(f"⚰️ [Notion] 페이지 복구 실패: {restore_res.text}")
-                
-                # 그 외 에러
-                else:
-                    last_error = res.text
-                    print(f"⚠️ [Append Fail] {res.status_code}: {res.text[:150]}...")
-                    time.sleep(1)
-                    
-            except Exception as e:
-                last_error = str(e)
-                print(f"⚠️ [Append Error] {e}")
-                time.sleep(1)
-        
-        if not success_chunk:
-            print(f"❌ [Critical] 블록 전송 실패. Reason: {last_error}")
-            is_all_success = False
-            break 
-            
-    if is_all_success:
-        return True, "성공"
-    else:
-        return False, f"실패: {last_error}"
+    return flattened
+
+
+def build_children_blocks(body_content):
+    return _build_children_blocks_impl(body_content or {})
