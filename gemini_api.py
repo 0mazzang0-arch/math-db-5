@@ -578,20 +578,47 @@ def parse_tagged_response(text):
             return "Unknown"
         return ss
 
-    # ✅ 핵심: db_columns를 레거시 태그로 "복사"해서 채운다 (요약 금지)
-    data["db_columns"]["necessity"] = _normalize_unknown(legacy_necessity)
-    data["db_columns"]["key_idea"] = _normalize_unknown(legacy_key_idea)
-    data["db_columns"]["special_point"] = _normalize_unknown(legacy_special)
+    def _to_db_index_string(raw: str, max_len: int = 180) -> str:
+        """레거시 본문은 보존하고, DB 칼럼에는 인덱스용 짧은 문자열만 저장한다."""
+        normalized = _normalize_unknown(raw)
+        if normalized == "Unknown":
+            return "Unknown"
+
+        pieces = []
+        for line in normalized.splitlines():
+            t = line.strip()
+            if not t:
+                continue
+            if "|" in t:
+                cols = [c.strip() for c in t.split("|")]
+                if len(cols) >= 2 and cols[1]:
+                    pieces.append(cols[1])
+                else:
+                    pieces.append(t)
+            else:
+                pieces.append(t)
+
+        one_line = " / ".join([p for p in pieces if p]).strip()
+        if not one_line:
+            return "Unknown"
+        if len(one_line) > max_len:
+            return one_line[:max_len - 3].rstrip() + "..."
+        return one_line
+
+    # ✅ DB 컬럼은 인덱스용 정규화 문자열로만 저장
+    data["db_columns"]["necessity"] = _to_db_index_string(legacy_necessity)
+    data["db_columns"]["key_idea"] = _to_db_index_string(legacy_key_idea)
+    data["db_columns"]["special_point"] = _to_db_index_string(legacy_special)
 
 
     # 3. [Safety Nets] 독립 리스트 파싱
     data["body_content"]["key_ideas_list"] = parse_list(extract_section("KEY_IDEAS_LIST_START", "KEY_IDEAS_LIST_END", "KeyList"))
     if data["db_columns"]["key_idea"] == "Unknown" and data["body_content"]["key_ideas_list"]:
-        data["db_columns"]["key_idea"] = "\n".join(data["body_content"]["key_ideas_list"])
+        data["db_columns"]["key_idea"] = " / ".join(data["body_content"]["key_ideas_list"])
 
     data["body_content"]["special_points_list"] = parse_list(extract_section("SPECIAL_POINTS_LIST_START", "SPECIAL_POINTS_LIST_END", "SpecList"))
     if data["db_columns"]["special_point"] == "Unknown" and data["body_content"]["special_points_list"]:
-        data["db_columns"]["special_point"] = "\n".join(data["body_content"]["special_points_list"])
+        data["db_columns"]["special_point"] = " / ".join(data["body_content"]["special_points_list"])
     # 4. [Independent Modules] 실전개념, 기본개념, 그래프, 정답, 원문
     pc_raw = extract_section("PRACTICAL_CONCEPTS_START", "PRACTICAL_CONCEPTS_END", "PracConcept")
     pc_list = []
