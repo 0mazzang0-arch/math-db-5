@@ -578,20 +578,57 @@ def parse_tagged_response(text):
             return "Unknown"
         return ss
 
-    # ✅ 핵심: db_columns를 레거시 태그로 "복사"해서 채운다 (요약 금지)
-    data["db_columns"]["necessity"] = _normalize_unknown(legacy_necessity)
-    data["db_columns"]["key_idea"] = _normalize_unknown(legacy_key_idea)
-    data["db_columns"]["special_point"] = _normalize_unknown(legacy_special)
+    def _to_db_index_string(items, max_len: int = 180) -> str:
+        pieces = []
+        for item in items:
+            t = (item or "").strip()
+            if not t:
+                continue
+            pieces.append(t)
+
+        one_line = " / ".join(pieces).strip()
+        one_line = _normalize_unknown(one_line)
+        if one_line == "Unknown":
+            return "Unknown"
+        if len(one_line) > max_len:
+            return one_line[:max_len - 3].rstrip() + "..."
+        return one_line
+
+    strict_key_contents = []
+    strict_trap_contents = []
+    strict_necessity_contents = []
+    for row in symbol_list:
+        dtype = (row.get("type") or "").strip().lower()
+        content = (row.get("content") or "")
+        ai_comment = (row.get("ai_comment") or "")
+
+        if dtype == "key":
+            if content and content.strip():
+                strict_key_contents.append(content)
+            if ai_comment and ai_comment.strip():
+                strict_key_contents.append(ai_comment)
+        if dtype == "trap":
+            if content and content.strip():
+                strict_trap_contents.append(content)
+            if ai_comment and ai_comment.strip():
+                strict_trap_contents.append(ai_comment)
+
+        for source_text in (content, ai_comment):
+            if not source_text:
+                continue
+            for bracket_text in re.findall(r"\[[^\[\]]+\]", source_text):
+                strict_necessity_contents.append(bracket_text)
+
+    # ✅ DB 컬럼은 teacher_decoding 증거 기반 Strict 규칙으로만 저장
+    data["db_columns"]["necessity"] = _to_db_index_string(strict_necessity_contents)
+    data["db_columns"]["key_idea"] = _to_db_index_string(strict_key_contents)
+    data["db_columns"]["special_point"] = _to_db_index_string(strict_trap_contents)
 
 
     # 3. [Safety Nets] 독립 리스트 파싱
     data["body_content"]["key_ideas_list"] = parse_list(extract_section("KEY_IDEAS_LIST_START", "KEY_IDEAS_LIST_END", "KeyList"))
-    if data["db_columns"]["key_idea"] == "Unknown" and data["body_content"]["key_ideas_list"]:
-        data["db_columns"]["key_idea"] = "\n".join(data["body_content"]["key_ideas_list"])
 
     data["body_content"]["special_points_list"] = parse_list(extract_section("SPECIAL_POINTS_LIST_START", "SPECIAL_POINTS_LIST_END", "SpecList"))
-    if data["db_columns"]["special_point"] == "Unknown" and data["body_content"]["special_points_list"]:
-        data["db_columns"]["special_point"] = "\n".join(data["body_content"]["special_points_list"])
     # 4. [Independent Modules] 실전개념, 기본개념, 그래프, 정답, 원문
     pc_raw = extract_section("PRACTICAL_CONCEPTS_START", "PRACTICAL_CONCEPTS_END", "PracConcept")
     pc_list = []
