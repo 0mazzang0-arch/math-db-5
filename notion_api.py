@@ -820,9 +820,22 @@ def append_children(page_id, body_content):
     # [B] teacher_decoding이 있는데, item 키명이 옛날/혼합일 수 있음 -> 키 정규화
     if decoding_list:
         normalized = []
+        # GPT 제안: 복구용 타입 집합 정의
+        TYPE_SET = {"Condition", "Goal", "Key", "Trap", "Strategy", "Example"}
+        
         for it in decoding_list:
             if not isinstance(it, dict):
                 continue
+
+            # [GPT 핀셋 복구] content가 타입처럼 생기고 type이 전부 Condition으로 고정된 경우 -> 스왑 복구
+            current_type = it.get("type", "")
+            current_content = it.get("content", "")
+            
+            # 만약 타입이 'Condition'인데 내용물이 'Goal' 같은 거라면? -> 칸 밀림 현상임!
+            if (current_type == "Condition") and (current_content in TYPE_SET):
+                it["type"] = current_content  # 내용을 타입으로 격상
+                it["content"] = "Unknown"     # 내용은 비어있으니 Unknown 처리
+            
             normalized.append({
                 "symbol": it.get("symbol", ""),
                 "type": it.get("type", ""),

@@ -419,16 +419,51 @@ def parse_tagged_response(text):
 # 1. [STEP 1] Symbol Table 파싱
     raw_symbols = extract_section("SYMBOL_TABLE_START", "SYMBOL_TABLE_END")
     symbol_list = []
+
     if raw_symbols:
-        for line in raw_symbols.split('\n'):
-            if "|" in line:
-                parts = [p.strip() for p in line.split("|")]
-                if len(parts) >= 2:
-                    sym = parts[0]
-                    mean = parts[1]
-                    comment = parts[2] if len(parts) > 2 else "" # 3번째 칸(주석) 확보
-                    symbol_list.append({"symbol": sym, "meaning": mean, "comment": comment})
-    data["body_content"]["symbol_table"] = symbol_list
+        for line in raw_symbols.splitlines():
+            line = line.strip()
+            if not line or line.startswith("Example") or line.startswith("("):
+                continue
+            if "|" not in line:
+                # 포맷 깨진 줄도 보존 (누락 방지)
+                symbol_list.append({
+                    "symbol": "Unknown",
+                    "type": "Trap",
+                    "content": line,
+                    "ai_comment": "(SYMBOL_TABLE 포맷 오류: '|' 없음)"
+                })
+                continue
+
+            parts = [p.strip() for p in line.split("|")]
+
+            # 4열 기대: Symbol | Type | Verbatim Content | Strategic Commentary
+            sym = parts[0] if len(parts) > 0 else ""
+            dtype = parts[1] if len(parts) > 1 else ""
+            content = parts[2] if len(parts) > 2 else ""
+            comment = parts[3] if len(parts) > 3 else ""
+
+            # 누락 방지: 최소한이라도 채움
+            if not dtype:
+                dtype = "Condition"
+            if not content:
+                content = "Unknown"
+
+            symbol_list.append({
+                "symbol": sym,
+                "type": dtype,
+                "content": content,
+                "ai_comment": comment
+            })
+
+    # ✅ 핵심: 이제부터 Notion은 teacher_decoding만 보면 4열이 항상 맞는다
+    data["body_content"]["teacher_decoding"] = symbol_list
+
+    # (선택) 구버전 호환을 위해 symbol_table도 남기고 싶으면 아래처럼 저장
+    data["body_content"]["symbol_table"] = [
+        {"symbol": x["symbol"], "meaning": x["content"], "comment": x["ai_comment"], "type": x["type"]}
+        for x in symbol_list
+    ]
 
     # [신규 복구] 전략 로드맵 & 행동 강령 추출
     data["body_content"]["strategy_overview"] = extract_section("STRATEGY_START", "STRATEGY_END")
