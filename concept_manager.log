@@ -565,3 +565,19 @@
 2026-02-14 16:38:00,099 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
 2026-02-14 16:38:00,103 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 16:38:02,857 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 200 None
+2026-02-14 16:40:16,076 - INFO - 🔗 [Merged] '칸막이 모델과 중복조합' -> '(중복의심) [42%] 칸막이 모델과 중복조합' 병합 완료.
+2026-02-14 16:40:16,325 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 16:40:17,008 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 16:40:17,428 - INFO - 🔗 [Merged] '순서가 정해진 순열' -> '순서가 정해진 순열' 병합 완료.
+2026-02-14 16:40:17,676 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 16:40:18,275 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 16:40:18,277 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 16:40:19,564 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 16:40:19,567 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 16:40:21,828 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-812d-bd37-e9ef1b478ea0/children HTTP/1.1" 200 None
+2026-02-14 16:42:21,177 - INFO - 🔗 [Merged] '시행 횟수의 변수화' -> '시행 횟수의 변수화' 병합 완료.
+2026-02-14 16:42:21,424 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 16:42:22,099 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 16:42:22,102 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 16:42:23,927 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
+2026-02-14 16:42:23,930 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
