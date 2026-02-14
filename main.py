@@ -926,6 +926,23 @@ class AutoMathBot:
                     self.move_to_dir(path, ERROR_DIR, img)
                     return
 
+                try:
+                    deep_root_basename = os.path.basename(os.path.normpath(config.DEEP_WATCH_DIR)).strip()
+                    parent_folder = os.path.basename(os.path.dirname(path)).strip()
+                    folder_tag = "" if parent_folder == deep_root_basename else parent_folder
+
+                    if "db_columns" not in json_data or not isinstance(json_data["db_columns"], dict):
+                        json_data["db_columns"] = {}
+
+                    if "tags" not in json_data["db_columns"] or not isinstance(json_data["db_columns"]["tags"], list):
+                        json_data["db_columns"]["tags"] = []
+
+                    if folder_tag and folder_tag not in json_data["db_columns"]["tags"]:
+                        json_data["db_columns"]["tags"].append(folder_tag)
+                        self.log(f"🏷️ [Auto Tag] 폴더명 태그 추가: {folder_tag}")
+                except Exception as e:
+                    self.log(f"⚠️ [Tag Error] 폴더 태그 추가 실패 (무시하고 진행): {e}")
+
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
                 # 3. 개념 ID (Concept ID)
