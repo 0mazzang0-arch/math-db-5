@@ -526,3 +526,16 @@
 2026-02-14 15:30:26,737 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
 2026-02-14 15:33:46,889 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 15:33:47,669 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 15:49:58,479 - INFO - 🔗 [Merged] '여사건의 이용' -> '(중복의심) [55%] 여사건의 이용' 병합 완료.
+2026-02-14 15:49:58,738 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:49:59,656 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 15:49:59,658 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:50:00,496 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
+2026-02-14 15:50:00,500 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:50:03,024 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81bb-b295-d663476b2e6b/children HTTP/1.1" 200 None
+2026-02-14 15:52:06,697 - INFO - 🛡️ [Skip] '범위가 있는 중복조합' 내용은 이미 '범위가 있는 중복조합'에 있음.
+2026-02-14 15:52:07,154 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:52:07,966 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 15:52:07,971 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 15:52:09,105 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 15:52:09,108 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
