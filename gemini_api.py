@@ -173,7 +173,8 @@ Example:
 - Rules (NO FUNCTIONAL SUMMARY / NO HALLUCINATION):
   1) Evidence 없는 결론 금지(추측 금지).
   2) 결론은 반드시 “무엇을 할지(행동/도구/치환/케이스 분류)”로 연결되어야 함.
-  3) 계산 디테일을 전부 늘어놓지 말고, **논리 흐름(필연성)** 중심으로 연결하되, 필요한 핵심 계산 결과는 포함해도 됨.
+  3) **NO FUNCTIONAL SUMMARY:** 케이스 분기, 변수 치환, 포함/배제, 중간 계산 결과를 **절대 생략하지 말 것**. (학생이 그대로 따라 적을 수 있을 정도로)
+  5) **MINIMUM STEPS:** 최소 8개의 bullet을 출력하라. 부족하면 케이스/치환/계산/결론을 쪼개서 bullet 수를 늘려라.
   4) 원문이 불명확하면 Evidence는 `Unknown`으로 표기하고, 임의로 채우지 말 것.
 - Example:
   * **[상황 파악]** “(가) 흰색 카드는 작은 수부터 크기순” (Evidence) → **순서열거가 아니라 ‘자리선택(조합)’으로 환원** (Conclusion)
@@ -185,6 +186,9 @@ Example:
 # [LEGACY TAGS FOR PARSER COMPATIBILITY - DO NOT OMIT]
 # IMPORTANT: Even if content is empty, you MUST output the tags and put "Unknown" inside.
 # -------------------------------------------------------
+
+**MANDATORY FILL:** If any relevant evidence exists in VERBATIM / SYMBOL_TABLE / LOGIC_NARRATIVE, you MUST copy it into the corresponding legacy tag. Do NOT leave it Unknown when evidence exists.
+
 
 [[NECESSITY_START]]
 (필연성: 반드시 채워라. 대괄호[...] 또는 (필) 또는 화살표 흐름을 근거로 논리 이유를 적어라. 없으면 Unknown)
@@ -256,6 +260,7 @@ Example:
 [[SPECIAL_POINTS_LIST_END]]
 
 [[DB_COLUMNS_START]]
+If a legacy tag has non-Unknown content, you MUST reflect it into DB_COLUMNS (necessity/key_idea/special_point) with no omission. (Copy, do not summarize.)
 necessity: (Legacy Summary for DB)
 key_idea: (Legacy Summary for DB)
 special_point: (Legacy Summary for DB)
