@@ -1283,9 +1283,11 @@ class AutoMathBot:
                                 self.root.after(0, lambda: self.log("❌ 분석 데이터 추출 실패. ERROR 이동."))
                                 self.move_to_dir(path, ERROR_DIR, img)
                                 continue
-# ▼▼▼ [여기서부터 붙여넣기] 들여쓰기 라인(Vertical Line)을 윗줄 continue와 똑같이 맞추세요 ▼▼▼
-                                # [Robust Logic] 부모 폴더명을 추출하여 태그로 사용합니다.
+# [Robust Logic] 부모 폴더명을 추출하여 태그로 사용합니다.
                                 try:
+                                    # 👇 [디버그용 추가] 이 줄을 복사해서 붙여넣으세요 👇
+                                    self.root.after(0, lambda p=path: self.log(f"🧭 [Tag Debug] path={p} | parent={os.path.basename(os.path.dirname(p))} | deep_root={os.path.basename(config.DEEP_WATCH_DIR)}"))
+                                    
                                     parent_folder_path = os.path.dirname(path)
                                     parent_folder_name = os.path.basename(parent_folder_path).strip()
                                     
@@ -1483,9 +1485,11 @@ class AutoMathBot:
                             if not json_data:
                                 self.move_to_dir(path, ERROR_DIR, img)
                                 continue
-# ▼▼▼ [여기서부터 붙여넣기] 들여쓰기 라인을 윗줄 continue와 똑같이 맞추세요 ▼▼▼
-                                # [Robust Logic] 타임아웃된 파일 태그 처리
+# [Robust Logic] 타임아웃된 파일 태그 처리
                                 try:
+                                    # 👇 [디버그용 추가 2] 여기도 똑같이 붙여넣으세요 👇
+                                    self.root.after(0, lambda p=path: self.log(f"🧭 [Tag Debug-Timeout] path={p} | parent={os.path.basename(os.path.dirname(p))} | deep_root={os.path.basename(config.DEEP_WATCH_DIR)}"))
+                                    
                                     parent_folder_path_to = os.path.dirname(path)
                                     parent_folder_name_to = os.path.basename(parent_folder_path_to).strip()
                                     
