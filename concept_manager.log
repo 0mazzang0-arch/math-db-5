@@ -431,3 +431,14 @@
 2026-02-14 14:18:10,536 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
 2026-02-14 14:18:10,541 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 14:18:13,001 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81bb-b295-d663476b2e6b/children HTTP/1.1" 200 None
+2026-02-14 14:20:05,362 - INFO - 🔗 [Merged] '범위가 있는 중복조합' -> '범위가 있는 중복조합' 병합 완료.
+2026-02-14 14:20:05,607 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:20:06,199 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 14:20:06,202 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:20:07,706 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 14:20:07,708 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:20:09,410 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 200 None
+2026-02-14 14:22:00,497 - WARNING - ⚠️ [Suspect] '중복조합과 칸막이 모델' vs '(중복의심) [42%] 칸막이 모델과 중복조합' (50%). 태그 부착 저장.
+2026-02-14 14:22:01,148 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:22:01,750 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 14:22:01,752 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
