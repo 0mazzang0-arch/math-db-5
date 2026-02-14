@@ -702,3 +702,18 @@
 2026-02-14 20:19:02,512 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 20:19:03,199 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
 2026-02-14 20:19:03,203 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 20:19:08,305 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-812d-bd37-e9ef1b478ea0/children HTTP/1.1" 200 None
+2026-02-14 20:45:56,365 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 20:46:00,807 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 20:49:17,645 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 20:49:18,909 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 20:51:38,755 - INFO - 🔗 [Merged] '순서가 정해진 순열의 해석' -> '(중복의심) [84%] 순서가 정해진 순열의 해석' 병합 완료.
+2026-02-14 20:51:39,005 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 20:51:40,478 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 20:51:40,927 - INFO - 🔗 [Merged] '칸막이 모델 (Stars and Bars)' -> '칸막이 모델 (Stars and Bars)' 병합 완료.
+2026-02-14 20:51:41,191 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 20:51:41,900 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 20:51:41,902 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 20:51:43,290 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 20:51:43,295 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 20:51:47,065 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-812d-bd37-e9ef1b478ea0/children HTTP/1.1" 200 None
