@@ -456,3 +456,10 @@
 2026-02-14 14:28:30,562 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
 2026-02-14 14:28:30,566 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 14:28:32,556 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-8153-9d56-c50bbfe36592/children HTTP/1.1" 200 None
+2026-02-14 14:30:34,847 - INFO - 🔗 [Merged] '범위가 있는 중복조합' -> '범위가 있는 중복조합' 병합 완료.
+2026-02-14 14:30:35,102 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:30:36,180 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 14:30:36,186 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:30:37,003 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 14:30:37,006 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 14:30:39,553 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 200 None
