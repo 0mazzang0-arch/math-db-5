@@ -343,3 +343,16 @@
 2026-02-14 13:22:10,273 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
 2026-02-14 13:22:10,277 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 13:22:12,214 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81e1-9522-e4de0c5085d9/children HTTP/1.1" 200 None
+2026-02-14 13:24:12,698 - INFO - 🔗 [Merged] '칸막이 모델과 중복조합' -> '(중복의심) [42%] 칸막이 모델과 중복조합' 병합 완료.
+2026-02-14 13:24:12,945 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:24:13,842 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 13:24:13,845 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:24:14,824 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 13:24:14,828 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:24:16,762 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-812d-bd37-e9ef1b478ea0/children HTTP/1.1" 200 None
+2026-02-14 13:26:01,108 - WARNING - ⚠️ [Suspect] '시행 횟수의 변수화 (Variable Assignment to Operations)' vs '(중복의심) [47%] 시행 횟수의 변수화 (Modeling Operations)' (62%). 태그 부착 저장.
+2026-02-14 13:26:01,701 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:26:02,401 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 13:26:02,403 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:26:03,134 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
+2026-02-14 13:26:03,137 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
