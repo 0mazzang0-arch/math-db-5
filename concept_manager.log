@@ -357,3 +357,20 @@
 2026-02-14 13:26:03,134 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-8153-9d56-c50bbfe36592 HTTP/1.1" 200 None
 2026-02-14 13:26:03,137 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 13:26:04,893 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-8153-9d56-c50bbfe36592/children HTTP/1.1" 200 None
+2026-02-14 13:28:34,027 - WARNING - ⚠️ [Suspect] '여사건의 이용' vs '(중복의심) [41%] 여사건을 이용한 순열과 조합' (55%). 태그 부착 저장.
+2026-02-14 13:28:34,652 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:28:35,312 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 13:28:35,315 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:28:35,973 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
+2026-02-14 13:28:35,976 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:28:38,045 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81bb-b295-d663476b2e6b/children HTTP/1.1" 200 None
+2026-02-14 13:37:42,755 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:37:45,790 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 13:39:46,138 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:39:46,786 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 13:42:13,733 - INFO - 🔗 [Merged] '범위가 있는 중복조합의 해결 전략' -> '(중복의심) [78%] 범위가 있는 중복조합의 해결 전략' 병합 완료.
+2026-02-14 13:42:13,979 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:42:14,587 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 13:42:14,589 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 13:42:15,274 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81e1-9522-e4de0c5085d9 HTTP/1.1" 200 None
+2026-02-14 13:42:15,278 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443

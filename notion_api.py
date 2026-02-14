@@ -789,18 +789,57 @@ def append_children(page_id, body_content):
         all_blocks.append(make_text_block(" "))
 
     # -------------------------------------------------------
-    # 2. 🧠 선생님의 시선 (Teacher's Decoding V35)
+    # -------------------------------------------------------
+        # -------------------------------------------------------
+    # 2. 🧠 선생님의 시선 (Teacher's Decoding) [UNIFIED: Always 4-Column]
+    #    ✅ 출력 통일 원칙:
+    #    - 입력이 symbol_table 이든 teacher_decoding 이든 상관없이
+    #      항상 make_teacher_decoding_table(4열)로 렌더링한다.
+    #    - 3열 make_symbol_table 경로는 더 이상 사용하지 않는다. (혼재 방지)
     # -------------------------------------------------------
     symbol_data = body_content.get("symbol_table", [])
+    decoding_list = body_content.get("teacher_decoding", [])
     logic_data = body_content.get("logic_narrative", [])
-    
-    if symbol_data or logic_data:
+
+    # [A] teacher_decoding이 없고 symbol_table만 있는 경우 -> 4열 teacher_decoding 형태로 변환
+    # symbol_table item keys: symbol / meaning / comment
+    # teacher_decoding item keys: symbol / type / content / ai_comment
+    if (not decoding_list) and symbol_data:
+        decoding_list = []
+        for it in symbol_data:
+            # 방어: dict 아니면 무시
+            if not isinstance(it, dict):
+                continue
+            decoding_list.append({
+                "symbol": it.get("symbol", ""),
+                "type": it.get("type", "") or "Condition",          # type이 없으면 기본 Condition
+                "content": it.get("meaning", ""),                   # meaning -> content
+                "ai_comment": it.get("comment", ""),                # comment -> ai_comment
+            })
+
+    # [B] teacher_decoding이 있는데, item 키명이 옛날/혼합일 수 있음 -> 키 정규화
+    if decoding_list:
+        normalized = []
+        for it in decoding_list:
+            if not isinstance(it, dict):
+                continue
+            normalized.append({
+                "symbol": it.get("symbol", ""),
+                "type": it.get("type", ""),
+                "content": it.get("content", "") or it.get("meaning", ""),  # 혹시 content 대신 meaning이면 흡수
+                "ai_comment": it.get("ai_comment", "") or it.get("comment", ""),
+            })
+        decoding_list = normalized
+
+    if decoding_list or logic_data:
         all_blocks.append(make_heading_2("🧠 선생님의 시선 (Teacher's Decoding)", "blue_background"))
-        
-        # 2-1. 기호 정의 테이블 (3열)
-        if symbol_data:
+
+        # 2-1. 기호 정의 테이블 (항상 4열로 통일)
+        if decoding_list:
             all_blocks.append(make_text_block("📌 기호 정의 (Symbol Map)"))
-            all_blocks.append(make_symbol_table(symbol_data))
+            table = make_teacher_decoding_table(decoding_list)
+            if table:
+                all_blocks.append(table)
             all_blocks.append(make_text_block(" "))
 
         # 2-2. 논리 서술 (이야기)
@@ -808,6 +847,7 @@ def append_children(page_id, body_content):
             all_blocks.append(make_text_block("📝 논리적 풀이 흐름 (Logic Narrative)"))
             all_blocks.extend(make_logic_narrative_blocks(logic_data))
             all_blocks.append(make_text_block(" "))
+
 
     # -------------------------------------------------------
     # [2.5] ⚡ 행동 강령 (Action Protocol) - [신규 배치: 서술 직후]
