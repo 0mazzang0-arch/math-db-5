@@ -647,3 +647,15 @@
 2026-02-14 18:29:08,349 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
 2026-02-14 18:29:09,467 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-81bb-b295-d663476b2e6b HTTP/1.1" 200 None
 2026-02-14 18:29:09,470 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 18:29:11,135 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-81bb-b295-d663476b2e6b/children HTTP/1.1" 200 None
+2026-02-14 18:56:25,008 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 18:56:28,267 - DEBUG - https://api.notion.com:443 "POST /v1/databases/2f89c36bb12a808c937ac179959da411/query HTTP/1.1" 200 None
+2026-02-14 18:59:37,736 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 18:59:38,567 - DEBUG - https://api.notion.com:443 "POST /v1/databases/3009c36bb12a80e28181ca6ecd9d7139/query HTTP/1.1" 200 None
+2026-02-14 19:02:14,799 - INFO - 🔗 [Merged] '중복조합과 칸막이 모델' -> '(중복의심) [50%] 중복조합과 칸막이 모델' 병합 완료.
+2026-02-14 19:02:15,059 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 19:02:15,737 - DEBUG - https://api.notion.com:443 "POST /v1/pages HTTP/1.1" 200 None
+2026-02-14 19:02:15,740 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 19:02:16,419 - DEBUG - https://api.notion.com:443 "PATCH /v1/pages/2f89c36b-b12a-812d-bd37-e9ef1b478ea0 HTTP/1.1" 200 None
+2026-02-14 19:02:16,423 - DEBUG - Starting new HTTPS connection (1): api.notion.com:443
+2026-02-14 19:02:18,426 - DEBUG - https://api.notion.com:443 "PATCH /v1/blocks/2f89c36b-b12a-812d-bd37-e9ef1b478ea0/children HTTP/1.1" 200 None
