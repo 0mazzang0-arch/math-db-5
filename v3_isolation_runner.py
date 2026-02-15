@@ -296,6 +296,8 @@ def main() -> None:
     parser.add_argument("--force_region_detection", type=int, choices=[-1, 0, 1], default=-1)
     args = parser.parse_args()
 
+    warmup_enabled = bool(args.warmup)
+
     if args.pages_dir:
         run_pages_dir(Path(args.pages_dir), warmup=bool(args.warmup), profile=args.profile, force_region_detection=args.force_region_detection)
         return
