@@ -67,3 +67,8 @@ python v3_isolation_runner.py C:/temp/pages/P003.png --profile fast --force_regi
   - `min`은 `ok/page_file/timing/anchors/objects/pp_meta`만 stdout에 포함(대용량 `pp_json`/`pp_obj` 미포함).
   - GUI 배치 호출은 기본 `--payload min`, 단일 isolation 호출은 호환 위해 `--payload full`.
   - GUI의 runner 로그 저장 체크박스 기본값을 OFF로 변경.
+
+- 자동 YAML 생성
+  - `scripts/export_ppv3_yaml.py`: `PPStructureV3_full.yaml` 자동 export.
+  - `scripts/make_fast_yaml.py`: full YAML을 기반으로 fast YAML 자동 생성(구조 유지, 존재 키만 수정).
+  - fast 생성 시 `use_doc_preprocessor`는 유지(true), `use_region_detection`은 강제 true.

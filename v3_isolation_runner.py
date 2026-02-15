@@ -13,6 +13,15 @@ _LAST_EMIT_MS = 0.0
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "configs"
 _ANCHOR_RE = re.compile(r"^\s*([A-C])\s*([0-9]{1,3})?\s*$")
+_FAST_DISABLE_KEYS = {
+    "use_table_recognition",
+    "use_formula_recognition",
+    "use_chart_recognition",
+    "use_seal_recognition",
+    "use_doc_unwarping",
+    "use_doc_orientation_classify",
+    "use_textline_orientation",
+}
 
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["FLAGS_use_mkldnn"] = "0"
@@ -80,9 +89,6 @@ def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "") -> float:
     _LAST_EMIT_MS = (time.perf_counter() - emit_start) * 1000.0
     return _LAST_EMIT_MS
 
-    def _key(p: Path):
-        m = re.match(r"^P(\d+)\.png$", p.name)
-        return (0, int(m.group(1)), p.name) if m else (1, 0, p.name)
 
 def _sorted_page_files(pages_dir: Path) -> List[Path]:
     files = [p for p in pages_dir.glob("P*.png") if p.is_file()]
@@ -266,17 +272,67 @@ def _predict_with_fallback(engine: Any, inp: Any, predict_kwargs: Dict[str, Any]
         raise
 
 
+def _export_full_yaml_if_missing(full_yaml: Path) -> None:
+    if full_yaml.exists():
+        return
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        from paddleocr import PPStructureV3
+
+        PPStructureV3().export_paddlex_config_to_yaml(str(full_yaml))
+        _stage(f"exported_full_yaml {full_yaml.name}")
+    except Exception as e:
+        _stage(f"export_full_yaml_skip err={e}")
+
+
+def _replace_bool_line(line: str, key: str, value: bool) -> str:
+    m = re.match(rf"^(\s*){re.escape(key)}\s*:\s*(true|false|True|False)(\s*(#.*)?)$", line)
+    if not m:
+        return line
+    return f"{m.group(1)}{key}: {'true' if value else 'false'}{m.group(3) or ''}"
+
+
+def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> None:
+    if not full_yaml.exists():
+        return
+    try:
+        lines = full_yaml.read_text(encoding="utf-8", errors="replace").splitlines()
+        out = []
+        for line in lines:
+            updated = line
+            for key in _FAST_DISABLE_KEYS:
+                updated = _replace_bool_line(updated, key, False)
+            updated = _replace_bool_line(updated, "use_region_detection", True)
+            # doc_preprocessor는 끄지 않는다
+            updated = _replace_bool_line(updated, "use_doc_preprocessor", True)
+            if re.match(r"^\s*batch_size\s*:\s*\d+\s*(#.*)?$", updated):
+                lead = re.match(r"^(\s*)", updated).group(1)  # type: ignore[union-attr]
+                updated = f"{lead}batch_size: 1"
+            out.append(updated)
+        fast_yaml.write_text("\n".join(out) + "\n", encoding="utf-8")
+        _stage(f"generated_fast_yaml {fast_yaml.name}")
+    except Exception as e:
+        _stage(f"make_fast_yaml_skip err={e}")
+
+
 def _load_engine(profile: str) -> Any:
     from paddleocr import PPStructureV3
 
+    full_cfg = CONFIG_DIR / "PP-StructureV3_full.yaml"
+    fast_cfg = CONFIG_DIR / "PP-StructureV3_fast.yaml"
+
+    if profile == "fast" and not fast_cfg.exists():
+        _export_full_yaml_if_missing(full_cfg)
+        _make_fast_yaml_from_full(full_cfg, fast_cfg)
+    elif profile == "full" and not full_cfg.exists():
+        _export_full_yaml_if_missing(full_cfg)
+
     if profile == "fast":
-        cfg = CONFIG_DIR / "PP-StructureV3_fast.yaml"
-        if cfg.exists():
-            return PPStructureV3(paddlex_config=str(cfg))
+        if fast_cfg.exists():
+            return PPStructureV3(paddlex_config=str(fast_cfg))
     if profile == "full":
-        cfg = CONFIG_DIR / "PP-StructureV3_full.yaml"
-        if cfg.exists():
-            return PPStructureV3(paddlex_config=str(cfg))
+        if full_cfg.exists():
+            return PPStructureV3(paddlex_config=str(full_cfg))
     return PPStructureV3()
 
 
@@ -293,6 +349,15 @@ def _warmup_once(engine: Any, enabled: bool, profile: str, force_region_detectio
     except Exception as e:
         _stage(f"warmup_skip err={e}")
 
+    if profile == "fast":
+        cfg = CONFIG_DIR / "PP-StructureV3_fast.yaml"
+        if cfg.exists():
+            return PPStructureV3(paddlex_config=str(cfg))
+    if profile == "full":
+        cfg = CONFIG_DIR / "PP-StructureV3_full.yaml"
+        if cfg.exists():
+            return PPStructureV3(paddlex_config=str(cfg))
+    return PPStructureV3()
 
 def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, force_region_detection: int, payload_mode: str) -> Dict[str, Any]:
     page_name = page_path.name
@@ -455,8 +520,6 @@ def main() -> int:
     parser.add_argument("--force_region_detection", type=int, choices=[-1, 0, 1], default=-1)
     parser.add_argument("--payload", choices=["min", "full"], default="min")
     args = parser.parse_args()
-
-    warmup_enabled = bool(args.warmup)
 
     if args.pages_dir:
         return run_pages_dir(

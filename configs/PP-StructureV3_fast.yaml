@@ -1,5 +1,5 @@
-# Fast PP-StructureV3 config placeholder.
-# Recommended: copy from exported full YAML and keep existing keys only.
+# Baseline PP-StructureV3 config placeholder.
+# Recommended: regenerate with `python scripts/export_ppv3_yaml.py` on a machine with paddleocr installed.
 pipeline_name: PP-StructureV3
 Global:
   batch_size: 1
@@ -8,7 +8,7 @@ Global:
   use_formula_recognition: false
   use_chart_recognition: false
   use_seal_recognition: false
-  use_doc_preprocessor: false
+  use_doc_preprocessor: true
   use_doc_unwarping: false
   use_doc_orientation_classify: false
   use_textline_orientation: false
