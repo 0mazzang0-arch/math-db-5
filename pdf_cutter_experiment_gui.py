@@ -1023,6 +1023,36 @@ class PDFCutterApp:
             results.append((str(txt), bbox))
         return results
 
+    @staticmethod
+    def _obj_get(source: Any, key: str, default: Any = None) -> Any:
+        if isinstance(source, dict):
+            return source.get(key, default)
+        try:
+            value = getattr(source, key, default)
+        except Exception:
+            value = default
+        return default if value is None else value
+
+    @staticmethod
+    def _ensure_list(source: Any) -> List[Any]:
+        if isinstance(source, list):
+            return source
+        if isinstance(source, tuple):
+            return list(source)
+        return []
+
+    def _collect_text_candidates_from_source(self, source: Any, trace_samples: List[Dict[str, Any]], cap: int = 40) -> List[Tuple[str, List[int]]]:
+        results: List[Tuple[str, List[int]]] = []
+        if source is None:
+            return results
+        for txt, bbox in self._extract_text_bbox_candidates(source):
+            if bbox is None:
+                continue
+            if len(trace_samples) < cap and TRACE_MODE:
+                trace_samples.append({"text": txt, "bbox": bbox})
+            results.append((str(txt), bbox))
+        return results
+
     def _normalize_structure(self, data: Dict[str, Any], page_w: int, page_h: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         pp_json = data.get("pp_json", {}) if isinstance(data, dict) else {}
         pp_obj = data.get("pp_obj", {}) if isinstance(data, dict) else {}
@@ -1182,6 +1212,35 @@ class PDFCutterApp:
                     break
             if len(records) >= candidate_cap:
                 break
+
+        ocr_candidate_sources: List[Any] = []
+        ocr_candidate_sources.append(self._obj_get(pp_obj, "overall_ocr_res"))
+        for parsing_item in self._ensure_list(self._obj_get(pp_obj, "parsing_res_list")):
+            ocr_candidate_sources.append(self._obj_get(parsing_item, "overall_ocr_res"))
+        for obj_key in ("region_det_res", "layout_det_res"):
+            ocr_candidate_sources.append(self._obj_get(pp_obj, obj_key))
+
+        for source in ocr_candidate_sources:
+            for txt, line_bbox in self._collect_text_candidates_from_source(source, trace_samples):
+                m = leading_num_pat.match(txt)
+                if not m:
+                    continue
+                qid = int(m.group(1))
+                if qid == 0 or qid > 9999:
+                    continue
+                lx1, ly1, lx2, ly2 = line_bbox
+                bw = max(0, lx2 - lx1)
+                bh = max(0, ly2 - ly1)
+                cx = (line_bbox[0] + line_bbox[2]) / 2
+                col = 0 if cx < (page_w * 0.5) else 1
+
+                if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
+                    continue
+                if col == 0 and lx1 > (0.35 * page_w):
+                    continue
+                if col == 1 and lx1 < (0.50 * page_w):
+                    continue
+                weak_anchor_candidates.append({"id": qid, "bbox": line_bbox, "col": col})
 
         for block in layout:
             if not isinstance(block, dict):
