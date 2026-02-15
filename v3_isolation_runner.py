@@ -1,4 +1,5 @@
 import argparse
+import ast
 import base64
 import json
 import os
@@ -59,7 +60,7 @@ def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "") -> float:
     emit_start = time.perf_counter()
     try:
         payload.setdefault("t_emit_ms", round(_LAST_EMIT_MS, 3))
-        print(json.dumps(payload, ensure_ascii=False, default=_converter), flush=True)
+        print(json.dumps(payload, ensure_ascii=True, default=_converter), flush=True)
     except Exception as e:
         err_payload = {
             "ok": False,
@@ -142,17 +143,33 @@ def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
             "use_table_recognition": False,
             "use_formula_recognition": False,
             "use_chart_recognition": False,
-            "use_region_detection": False,
-            "use_doc_orientation_classify": False,
-            "use_doc_unwarping": False,
-            "use_textline_orientation": False,
-            "use_seal_recognition": False,
-            "visualize": False,
-            "format_block_content": False,
+            "use_region_detection": True,
         }
     if force_region_detection in (0, 1):
         flags["use_region_detection"] = bool(force_region_detection)
     return flags
+
+
+def _sanitize_pp_json(pp_json: Any) -> Dict[str, Any]:
+    if not isinstance(pp_json, dict):
+        return {}
+    result = dict(pp_json)
+    res_val = result.get("res")
+    if isinstance(res_val, str):
+        parsed = None
+        try:
+            parsed = json.loads(res_val)
+        except Exception:
+            try:
+                parsed = ast.literal_eval(res_val)
+            except Exception:
+                parsed = None
+        if isinstance(parsed, (dict, list)):
+            result["res"] = parsed
+        else:
+            # 문자열 dict가 안전하게 파싱되지 않으면 pp_json 전체를 비워 JSONL 안전성 우선
+            return {}
+    return result
 
 
 def _predict_with_fallback(engine: Any, inp: Any, predict_kwargs: Dict[str, Any]) -> Any:
@@ -189,7 +206,8 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             output = _predict_with_fallback(engine, str(page_path), predict_kwargs)
 
         first = _first_output(output)
-        pp_json = _extract_json(first)
+        pp_json_raw = _extract_json(first)
+        pp_json = _sanitize_pp_json(pp_json_raw)
         t_predict_ms = (time.perf_counter() - predict_start) * 1000.0
         t_page_ms = (time.perf_counter() - page_start) * 1000.0
         if not isinstance(pp_json, dict):
@@ -202,6 +220,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             "predict_flags": predict_kwargs,
             "t_init_ms": round(t_init_ms, 3),
             "t_predict_ms": round(t_predict_ms, 3),
+            "pp_json_sanitized": True,
         }
         return {
             "ok": True,

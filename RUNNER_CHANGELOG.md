@@ -45,3 +45,8 @@ python v3_isolation_runner.py C:/temp/pages/P003.png --profile fast --force_regi
   - 배치 init 실패 시 `{"ok": false, "page_file": "__BATCH__", ...}` 1줄을 stdout으로 즉시 emit.
   - GUI는 `page_file=="__BATCH__"` 또는 빈 page_file의 `ok=false`를 runner fatal로 간주해 전체 페이지를 실패 처리.
   - GUI에서 결과가 전혀 없는 경우(`saved=0,error=0,done=0`)도 전체 실패로 보정.
+
+- FAST/JSON 보정
+  - `fast` 기본에서 `use_region_detection=True`로 동작(anchors 안정성 우선), `table/formula/chart`만 OFF.
+  - stdout JSONL emit은 `ensure_ascii=True`로 고정.
+  - `pp_json["res"]`가 문자열이면 `json.loads`/`ast.literal_eval`로 파싱 시도, 실패 시 `pp_json`를 비워 안전 JSON만 출력.
