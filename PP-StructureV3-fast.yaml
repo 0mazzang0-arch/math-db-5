@@ -1,0 +1,21 @@
+# Minimal PP-StructureV3 runtime profile for fast OCR-only runs.
+# If your local PaddleX schema differs, keep runner flag mode as fallback.
+pipeline_name: PP-StructureV3
+Global:
+  use_doc_orientation_classify: false
+  use_doc_unwarping: false
+  use_textline_orientation: false
+  use_seal_recognition: false
+SubModules:
+  LayoutDetection:
+    enabled: true
+  GeneralOCR:
+    enabled: true
+  RegionDetection:
+    enabled: false
+  TableRecognition:
+    enabled: false
+  FormulaRecognition:
+    enabled: false
+  ChartRecognition:
+    enabled: false

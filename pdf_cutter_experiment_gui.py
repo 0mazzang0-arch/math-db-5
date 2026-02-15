@@ -25,6 +25,7 @@ os.environ["FLAGS_use_onednn"] = "0"
 os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
+os.environ["PPSTRUCTURE_V3_ISOLATION"] = "1"
 
 GLOBAL_ISOLATION_MODE = os.environ.get("PPSTRUCTURE_V3_ISOLATION", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -185,17 +186,29 @@ class PaddleStructureClient:
             return None, "stage=isolation_runner err=runner file not found"
         try:
             proc = subprocess.run(
-                [sys.executable, str(runner_path), str(image_path)],
+                [sys.executable, str(runner_path), str(image_path), "--profile", os.environ.get("PPSTRUCTURE_V3_PROFILE", "fast")],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=900,
                 check=False,
+                env=self._isolation_env(),
             )
-            out = (proc.stdout or "").strip()
-            if not out:
+            lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            if not lines:
                 stderr_tail = (proc.stderr or "").strip()[-2000:]
                 return None, f"stage=isolation_runner err=empty stdout stderr={stderr_tail}"
-            payload = json.loads(out)
+            payload = None
+            for ln in reversed(lines):
+                try:
+                    payload = json.loads(ln)
+                    break
+                except Exception:
+                    continue
+            if payload is None:
+                stderr_tail = (proc.stderr or "").strip()[-2000:]
+                return None, f"stage=isolation_runner err=invalid json stdout stderr={stderr_tail}"
             if not isinstance(payload, dict):
                 return None, "stage=isolation_runner err=invalid payload"
             if payload.get("ok") and isinstance(payload.get("pp_json"), dict):
@@ -255,13 +268,24 @@ class PaddleStructureClient:
                 [sys.executable, str(runner_path), str(image_path)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=180,
                 check=False,
+                env=self._isolation_env(),
             )
-            out = (proc.stdout or "").strip()
-            if not out:
+            lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            if not lines:
                 return None, f"stage=fallback_subprocess err=empty stdout {PIN_GUIDE}"
-            payload = json.loads(out)
+            payload = None
+            for ln in reversed(lines):
+                try:
+                    payload = json.loads(ln)
+                    break
+                except Exception:
+                    continue
+            if payload is None:
+                return None, f"stage=fallback_subprocess err=invalid json payload {PIN_GUIDE}"
             if not isinstance(payload, dict):
                 return None, f"stage=fallback_subprocess err=invalid payload {PIN_GUIDE}"
             if payload.get("ok") and isinstance(payload.get("pp_json"), dict):
@@ -448,6 +472,7 @@ class PDFCutterApp:
         self.dpi_var = tk.IntVar(value=DEFAULT_DPI)
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_label_var = tk.StringVar(value="진행률: 0/0")
+        self.full_profile_var = tk.BooleanVar(value=False)
 
         self._build_ui()
         self._start_log_pump()
@@ -497,6 +522,7 @@ class PDFCutterApp:
         ttk.Spinbox(opt_frame, from_=MIN_WORKERS, to=MAX_WORKERS, textvariable=self.workers_var, width=6).pack(side=tk.LEFT, padx=6)
         ttk.Label(opt_frame, text="DPI").pack(side=tk.LEFT)
         ttk.Spinbox(opt_frame, from_=MIN_DPI, to=MAX_DPI, textvariable=self.dpi_var, width=6).pack(side=tk.LEFT, padx=6)
+        ttk.Checkbutton(opt_frame, text="정밀모드(full)", variable=self.full_profile_var).pack(side=tk.LEFT, padx=10)
 
         ctl_frame = ttk.Frame(top)
         ctl_frame.pack(fill=tk.X, pady=6)
@@ -538,6 +564,15 @@ class PDFCutterApp:
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
+    def _runner_profile(self) -> str:
+        return "full" if bool(self.full_profile_var.get()) else "fast"
+
+    def _isolation_env(self) -> Dict[str, str]:
+        os.environ["PPSTRUCTURE_V3_ISOLATION"] = "1"
+        env = os.environ.copy()
+        env["PPSTRUCTURE_V3_ISOLATION"] = "1"
+        return env
+
     def log(self, message: str) -> None:
         self.log_queue.put(message)
 
@@ -576,6 +611,9 @@ class PDFCutterApp:
         self.stop_btn.configure(state=tk.NORMAL)
         self.progress_var.set(0)
         self.progress_label_var.set("진행률: 0/0")
+        os.environ["PPSTRUCTURE_V3_ISOLATION"] = "1"
+        os.environ["PPSTRUCTURE_V3_PROFILE"] = self._runner_profile()
+        self.log(f"ℹ️ Runner profile={self._runner_profile()} isolation=1")
 
         self.worker_thread = threading.Thread(target=self._run_pipeline, daemon=True)
         self.worker_thread.start()
@@ -589,6 +627,7 @@ class PDFCutterApp:
         self.warmup_thread.start()
 
     def _run_warmup_subprocess(self) -> None:
+        os.environ["PPSTRUCTURE_V3_ISOLATION"] = "1"
         cmd = [
             sys.executable,
             "-c",
@@ -596,7 +635,14 @@ class PDFCutterApp:
         ]
         self.log(f"ℹ️ [Warmup] start cmd={' '.join(cmd[:2])} ...")
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                env=self._isolation_env(),
+            )
 
             def _pump(stream, prefix: str) -> None:
                 if stream is None:
@@ -762,6 +808,46 @@ class PDFCutterApp:
 
         return total_saved, total_errors, done_pages
 
+    def _retry_single_page_with_region(self, page_png_path: Path) -> Optional[Dict[str, Any]]:
+        runner_path = Path(__file__).resolve().parent / "v3_isolation_runner.py"
+        if not runner_path.exists():
+            return None
+        cmd = [
+            sys.executable,
+            str(runner_path),
+            str(page_png_path),
+            "--profile",
+            "fast",
+            "--warmup",
+            "0",
+            "--force_region_detection",
+            "1",
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=240,
+                check=False,
+                env=self._isolation_env(),
+            )
+            for line in reversed((proc.stdout or "").splitlines()):
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    payload = json.loads(raw)
+                except Exception:
+                    continue
+                if isinstance(payload, dict):
+                    return payload
+            return None
+        except Exception:
+            return None
+
     def _process_pdf_isolation_batch(
         self,
         tasks: List[PageTask],
@@ -783,15 +869,19 @@ class PDFCutterApp:
         total_errors = 0
         done_pages = 0
 
-        cmd = [sys.executable, str(runner_path), "--pages_dir", str(pages_dir), "--dpi", str(dpi)]
-        self.log(f"ℹ️ [IsolationBatch] start pages={len(tasks)}")
+        profile = self._runner_profile()
+        cmd = [sys.executable, str(runner_path), "--pages_dir", str(pages_dir), "--dpi", str(dpi), "--profile", profile]
+        self.log(f"ℹ️ [IsolationBatch] start pages={len(tasks)} profile={profile}")
 
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
+            env=self._isolation_env(),
         )
 
         stdout_queue: "queue.Queue[Optional[str]]" = queue.Queue()
@@ -894,25 +984,37 @@ class PDFCutterApp:
                 }
                 anchors, objects = self._normalize_structure(data, w, h)
                 if not anchors:
-                    trace = data.get("_trace", {}) if isinstance(data, dict) else {}
-                    total_errors += 1
-                    self._write_page_error(
-                        errors_dir,
-                        task.page_number,
-                        task.page_png_path,
-                        "anchors=0",
-                        stage="parse_anchors",
-                        extras={
-                            "pp_json_keys": trace.get("pp_json_keys", []),
-                            "text_candidates": trace.get("text_candidates", []),
-                            "pp_meta": trace.get("pp_meta", {}),
-                            "pp_json_sample": trace.get("pp_json_sample", {}),
-                            "trace_stats": trace.get("trace_stats", {}),
-                            "pp_obj_keys": trace.get("pp_obj_keys", []),
-                        },
-                    )
-                    self.log(f"❌ [Fail] P{task.page_number:03d} stage=parse_anchors err=anchors=0")
-                    continue
+                    if profile == "fast":
+                        retry_payload = self._retry_single_page_with_region(task.page_png_path)
+                        if retry_payload is not None and retry_payload.get("ok"):
+                            retry_data = {
+                                "pp_json": retry_payload.get("pp_json", {}),
+                                "pp_obj": retry_payload.get("pp_obj", {}),
+                                "pp_meta": retry_payload.get("pp_meta", {}),
+                            }
+                            anchors, objects = self._normalize_structure(retry_data, w, h)
+                            if anchors:
+                                self.log(f"♻️ [Recovery] P{task.page_number:03d} anchors restored via region_detection=ON")
+                    if not anchors:
+                        trace = data.get("_trace", {}) if isinstance(data, dict) else {}
+                        total_errors += 1
+                        self._write_page_error(
+                            errors_dir,
+                            task.page_number,
+                            task.page_png_path,
+                            "anchors=0",
+                            stage="parse_anchors",
+                            extras={
+                                "pp_json_keys": trace.get("pp_json_keys", []),
+                                "text_candidates": trace.get("text_candidates", []),
+                                "pp_meta": trace.get("pp_meta", {}),
+                                "pp_json_sample": trace.get("pp_json_sample", {}),
+                                "trace_stats": trace.get("trace_stats", {}),
+                                "pp_obj_keys": trace.get("pp_obj_keys", []),
+                            },
+                        )
+                        self.log(f"❌ [Fail] P{task.page_number:03d} stage=parse_anchors err=anchors=0")
+                        continue
 
                 crops, dropped, errors = self._build_anchor_slice_regions(anchors, objects, w, h)
                 if errors > 0 and not crops:
