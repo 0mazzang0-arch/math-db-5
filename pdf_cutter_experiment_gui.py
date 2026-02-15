@@ -1,5 +1,4 @@
 import json
-import os
 import queue
 import re
 import subprocess
@@ -196,7 +195,15 @@ class PaddleStructureClient:
             try:
                 runner_path.unlink(missing_ok=True)
             except Exception:
-                pass
+                j = None
+        if isinstance(j, dict):
+            return j
+        if isinstance(first, dict):
+            for k in ("json", "result", "res"):
+                cand = first.get(k)
+                if isinstance(cand, dict):
+                    return cand
+        return None
 
     def detect(self, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         if not self.enabled or cv2 is None or np is None:
