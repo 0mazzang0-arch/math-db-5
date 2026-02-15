@@ -186,7 +186,7 @@ class PaddleStructureClient:
             return None, "stage=isolation_runner err=runner file not found"
         try:
             proc = subprocess.run(
-                [sys.executable, str(runner_path), str(image_path), "--profile", os.environ.get("PPSTRUCTURE_V3_PROFILE", "fast")],
+                [sys.executable, str(runner_path), str(image_path), "--profile", os.environ.get("PPSTRUCTURE_V3_PROFILE", "fast"), "--payload", "full"],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -473,7 +473,7 @@ class PDFCutterApp:
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_label_var = tk.StringVar(value="진행률: 0/0")
         self.full_profile_var = tk.BooleanVar(value=False)
-        self.save_runner_logs_var = tk.BooleanVar(value=True)
+        self.save_runner_logs_var = tk.BooleanVar(value=False)
 
         self._build_ui()
         self._start_log_pump()
@@ -824,6 +824,8 @@ class PDFCutterApp:
             "0",
             "--force_region_detection",
             "1",
+            "--payload",
+            "min",
         ]
         try:
             proc = subprocess.run(
@@ -872,7 +874,7 @@ class PDFCutterApp:
         done_pages = 0
 
         profile = self._runner_profile()
-        cmd = [sys.executable, str(runner_path), "--pages_dir", str(pages_dir), "--dpi", str(dpi), "--profile", profile]
+        cmd = [sys.executable, str(runner_path), "--pages_dir", str(pages_dir), "--dpi", str(dpi), "--profile", profile, "--payload", "min"]
         self.log(f"ℹ️ [IsolationBatch] start pages={len(tasks)} profile={profile}")
 
         runner_out_fp = None
@@ -985,7 +987,7 @@ class PDFCutterApp:
                 self.log(
                     f"❌ [IsolationBatch] runner fatal stage={payload.get('stage','unknown')} err={str(payload.get('err','unknown'))[:200]}"
                 )
-                total_errors += len(tasks)
+                total_errors = len(tasks)
                 try:
                     proc.kill()
                 except Exception:
@@ -1021,22 +1023,35 @@ class PDFCutterApp:
             img = Image.open(task.page_png_path)
             w, h = img.size
             try:
-                data = {
-                    "pp_json": payload.get("pp_json", {}),
-                    "pp_obj": payload.get("pp_obj", {}),
-                    "pp_meta": payload.get("pp_meta", {}),
-                }
-                anchors, objects = self._normalize_structure(data, w, h)
+                if isinstance(payload.get("anchors"), list) and isinstance(payload.get("objects"), list):
+                    anchors = payload.get("anchors", [])
+                    objects = payload.get("objects", [])
+                    data = {
+                        "pp_json": {},
+                        "pp_obj": {},
+                        "pp_meta": payload.get("pp_meta", {}),
+                    }
+                else:
+                    data = {
+                        "pp_json": payload.get("pp_json", {}),
+                        "pp_obj": payload.get("pp_obj", {}),
+                        "pp_meta": payload.get("pp_meta", {}),
+                    }
+                    anchors, objects = self._normalize_structure(data, w, h)
                 if not anchors:
                     if profile == "fast":
                         retry_payload = self._retry_single_page_with_region(task.page_png_path)
                         if retry_payload is not None and retry_payload.get("ok"):
-                            retry_data = {
-                                "pp_json": retry_payload.get("pp_json", {}),
-                                "pp_obj": retry_payload.get("pp_obj", {}),
-                                "pp_meta": retry_payload.get("pp_meta", {}),
-                            }
-                            anchors, objects = self._normalize_structure(retry_data, w, h)
+                            if isinstance(retry_payload.get("anchors"), list) and isinstance(retry_payload.get("objects"), list):
+                                anchors = retry_payload.get("anchors", [])
+                                objects = retry_payload.get("objects", [])
+                            else:
+                                retry_data = {
+                                    "pp_json": retry_payload.get("pp_json", {}),
+                                    "pp_obj": retry_payload.get("pp_obj", {}),
+                                    "pp_meta": retry_payload.get("pp_meta", {}),
+                                }
+                                anchors, objects = self._normalize_structure(retry_data, w, h)
                             if anchors:
                                 self.log(f"♻️ [Recovery] P{task.page_number:03d} anchors restored via region_detection=ON")
                     if not anchors:

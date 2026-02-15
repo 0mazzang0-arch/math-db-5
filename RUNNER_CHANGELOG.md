@@ -56,3 +56,14 @@ python v3_isolation_runner.py C:/temp/pages/P003.png --profile fast --force_regi
   - fast 모드에서 stderr에 `Chart2Table`/`FormulaNet` 로딩 문자열이 감지되면 경고 1회 출력.
   - `scripts/validate_jsonl.py` 추가: JSONL 파싱 실패 라인 번호 + 앞뒤 1줄 컨텍스트 출력.
   - stderr 요약 로그에 `t_init_ms`, `t_predict_ms`, `t_emit_ms` 분리 출력.
+
+- YAML 기반 fast/full 로딩
+  - `v3_isolation_runner.py`는 profile별로 `configs/PP-StructureV3_fast.yaml` / `configs/PP-StructureV3_full.yaml`를 `paddlex_config`로 로드 시도.
+  - `scripts/export_ppv3_yaml.py`로 full YAML export 가능 (`configs/PP-StructureV3_full.yaml`).
+  - batch init 실패 시 stdout JSONL 1줄(`page_file=__BATCH__`) 출력 후 종료코드 1 반환.
+
+- payload 크기 제어
+  - runner CLI에 `--payload {min,full}` 추가(기본 `min`).
+  - `min`은 `ok/page_file/timing/anchors/objects/pp_meta`만 stdout에 포함(대용량 `pp_json`/`pp_obj` 미포함).
+  - GUI 배치 호출은 기본 `--payload min`, 단일 isolation 호출은 호환 위해 `--payload full`.
+  - GUI의 runner 로그 저장 체크박스 기본값을 OFF로 변경.
