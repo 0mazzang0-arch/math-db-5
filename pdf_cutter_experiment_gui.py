@@ -949,6 +949,18 @@ class PDFCutterApp:
                 continue
 
             page_file = str(payload.get("page_file", ""))
+            if payload.get("ok") is False and (not page_file or page_file == "__BATCH__"):
+                self.log(
+                    f"❌ [IsolationBatch] runner fatal stage={payload.get('stage','unknown')} err={str(payload.get('err','unknown'))[:200]}"
+                )
+                total_errors += len(tasks)
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                stdout_done = True
+                break
+
             task = task_by_name.get(page_file)
             if task is None:
                 if payload.get("ok") is False:
@@ -1075,6 +1087,10 @@ class PDFCutterApp:
 
         if proc.returncode not in (0, None):
             self.log(f"⚠️ [IsolationBatch] runner exit code={proc.returncode}")
+
+        if done_pages == 0 and total_saved == 0 and total_errors == 0:
+            self.log("❌ [IsolationBatch] runner produced no usable page payloads")
+            total_errors = len(tasks)
 
         return total_saved, total_errors, done_pages
 

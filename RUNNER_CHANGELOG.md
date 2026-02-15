@@ -39,3 +39,9 @@ python v3_isolation_runner.py --pages_dir C:/temp/pages --dpi 250 --profile full
 # single + region_detection 강제 ON (fallback 테스트용)
 python v3_isolation_runner.py C:/temp/pages/P003.png --profile fast --force_region_detection 1 --warmup 0
 ```
+
+- 안정화 보강
+  - runner init은 `PPStructureV3()` 단순 호출로 고정(`show_log` 전달 제거).
+  - 배치 init 실패 시 `{"ok": false, "page_file": "__BATCH__", ...}` 1줄을 stdout으로 즉시 emit.
+  - GUI는 `page_file=="__BATCH__"` 또는 빈 page_file의 `ok=false`를 runner fatal로 간주해 전체 페이지를 실패 처리.
+  - GUI에서 결과가 전혀 없는 경우(`saved=0,error=0,done=0`)도 전체 실패로 보정.
