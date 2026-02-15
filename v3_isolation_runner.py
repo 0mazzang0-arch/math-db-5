@@ -4,8 +4,11 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
+# ---------------------------------------------------------------------
+# Windows + PaddleOCR(PPStructureV3) 안정화용 환경 변수 (요구사항 고정)
+# ---------------------------------------------------------------------
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["FLAGS_use_mkldnn"] = "0"
 os.environ["FLAGS_use_onednn"] = "0"
@@ -13,12 +16,34 @@ os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
 
+# ---------------------------------------------------------------------
+# IMPORTANT (Windows cp949/mbcs):
+# - PPStructureV3 결과/로그에 cp949가 못 찍는 유니코드(한자/특수기호 등)가 섞이면
+#   stdout print 단계에서 UnicodeEncodeError가 발생할 수 있음.
+# - stdout/stderr의 encoding은 건드리지 않고, "encoding error handler"만 바꿔서
+#   출력이 절대 죽지 않게 한다. (unencodable char -> \uXXXX 형태로 escape)
+# ---------------------------------------------------------------------
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")  # type: ignore[attr-defined]
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(errors="backslashreplace")  # type: ignore[attr-defined]
+except Exception:
+    pass
+
 
 def _stage(msg: str) -> None:
+    # stderr로만 진행 로그(텍스트) 출력
     print(f"[stage] {msg}", file=sys.stderr, flush=True)
 
 
 def _default(obj: Any) -> Any:
+    """
+    json.dumps에서 ndarray/np scalar 등이 나오면 터지는 문제 방지.
+    - ndarray -> list
+    - np.int/np.float -> int/float
+    - Path -> str
+    """
     try:
         import numpy as np
 
@@ -36,6 +61,12 @@ def _default(obj: Any) -> Any:
 
 
 def _emit_line(payload: Dict[str, Any]) -> None:
+    # JSONL: 1 page == 1 line
+    print(json.dumps(payload, ensure_ascii=False, default=_default), flush=True)
+
+
+def _emit_obj(payload: Dict[str, Any]) -> None:
+    # 단일 이미지 모드: 1 JSON object 출력
     print(json.dumps(payload, ensure_ascii=False, default=_default), flush=True)
 
 
@@ -105,20 +136,54 @@ def _sorted_page_files(pages_dir: Path) -> List[Path]:
     return sorted(files, key=_key)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--pages_dir", required=True)
-    parser.add_argument("--dpi", type=int, default=250)
-    args = parser.parse_args()
+def _predict_one(engine: Any, page_path: Path) -> Dict[str, Any]:
+    page_name = page_path.name
+    try:
+        import cv2
+        import numpy as np
 
-    pages_dir = Path(args.pages_dir)
+        raw = cv2.imdecode(np.fromfile(str(page_path), dtype=np.uint8), cv2.IMREAD_COLOR)
+        if raw is None:
+            return {"ok": False, "page_file": page_name, "stage": "detect_load", "err": "imdecode failed"}
+
+        try:
+            output = engine.predict(input=raw)
+        except Exception:
+            # 일부 환경에서 input=str(path)가 더 안정적인 케이스가 있어 fallback
+            try:
+                output = engine.predict(input=str(page_path))
+            except Exception as e:
+                return {"ok": False, "page_file": page_name, "stage": "detect_predict", "err": str(e)}
+
+        first = _first_output(output)
+        pp_json = _extract_json(first)
+        if not isinstance(pp_json, dict):
+            return {
+                "ok": False,
+                "page_file": page_name,
+                "stage": "parse_json",
+                "err": "invalid json payload",
+                "first_type": type(first).__name__ if first is not None else "None",
+            }
+
+        pp_obj = _extract_first_object_fields(first)
+        pp_meta = {
+            "runner_mode": "single_or_pages_dir_batch",
+            "page_file": page_name,
+            "first_type": type(first).__name__ if first is not None else "None",
+            "json_keys": sorted(pp_json.keys()),
+        }
+        return {"ok": True, "page_file": page_name, "pp_json": pp_json, "pp_obj": pp_obj, "pp_meta": pp_meta}
+    except Exception as e:
+        return {"ok": False, "page_file": page_name, "stage": "runner_loop", "err": str(e)}
+
+
+def run_pages_dir(pages_dir: Path) -> None:
     if not pages_dir.exists() or not pages_dir.is_dir():
         _emit_line({"ok": False, "page_file": "", "stage": "args", "err": f"invalid pages_dir: {pages_dir}"})
         return
 
     try:
-        import cv2
-        import numpy as np
         from paddleocr import PPStructureV3
     except Exception as e:
         _emit_line({"ok": False, "page_file": "", "stage": "imports", "err": str(e)})
@@ -139,47 +204,72 @@ def main() -> None:
 
     for page_path in page_files:
         page_name = page_path.name
-        try:
-            _stage(f"predict_start {page_name}")
-            raw = cv2.imdecode(np.fromfile(str(page_path), dtype=np.uint8), cv2.IMREAD_COLOR)
-            if raw is None:
-                _emit_line({"ok": False, "page_file": page_name, "stage": "detect_load", "err": "imdecode failed"})
-                continue
-
-            try:
-                output = engine.predict(input=raw)
-            except Exception:
-                try:
-                    output = engine.predict(input=str(page_path))
-                except Exception as e:
-                    _emit_line({"ok": False, "page_file": page_name, "stage": "detect_predict", "err": str(e)})
-                    continue
-
-            first = _first_output(output)
-            pp_json = _extract_json(first)
-            if not isinstance(pp_json, dict):
-                _emit_line({
-                    "ok": False,
-                    "page_file": page_name,
-                    "stage": "parse_json",
-                    "err": "invalid json payload",
-                    "first_type": type(first).__name__ if first is not None else "None",
-                })
-                continue
-
-            pp_obj = _extract_first_object_fields(first)
-            pp_meta = {
-                "runner_mode": "pages_dir_batch",
-                "page_file": page_name,
-                "first_type": type(first).__name__ if first is not None else "None",
-                "json_keys": sorted(pp_json.keys()),
-            }
-            _emit_line({"ok": True, "page_file": page_name, "pp_json": pp_json, "pp_obj": pp_obj, "pp_meta": pp_meta})
-            _stage(f"predict_done {page_name}")
-        except Exception as e:
-            _emit_line({"ok": False, "page_file": page_name, "stage": "runner_loop", "err": str(e)})
+        _stage(f"predict_start {page_name}")
+        payload = _predict_one(engine, page_path)
+        # JSONL 출력은 절대 죽으면 안됨
+        _emit_line(payload)
+        _stage(f"predict_done {page_name}")
 
     _stage("done")
+
+
+def run_single_image(image_path: Path) -> None:
+    """
+    (호환성) 단일 이미지 입력 모드.
+    GUI의 PaddleStructureClient._run_isolation_runner()가 이 모드를 기대한다.
+    stdout에는 1개의 JSON object만 출력한다.
+    """
+    if not image_path.exists() or not image_path.is_file():
+        _emit_obj({"ok": False, "stage": "args", "err": f"invalid image_path: {image_path}"})
+        return
+
+    try:
+        from paddleocr import PPStructureV3
+    except Exception as e:
+        _emit_obj({"ok": False, "stage": "imports", "err": str(e)})
+        return
+
+    try:
+        engine = PPStructureV3()
+        _stage("init_ok(single)")
+    except Exception as e:
+        _emit_obj({"ok": False, "stage": "init_engine", "err": str(e)})
+        return
+
+    # 단일 이미지라도 payload는 batch와 동일한 스키마로 만들되,
+    # PaddleStructureClient는 pp_json만 필수로 보므로 ok/pp_json/pp_obj/pp_meta를 포함한다.
+    _stage(f"predict_start(single) {image_path.name}")
+    payload = _predict_one(engine, image_path)
+    if payload.get("ok"):
+        _emit_obj(
+            {
+                "ok": True,
+                "pp_json": payload.get("pp_json", {}),
+                "pp_obj": payload.get("pp_obj", {}),
+                "pp_meta": payload.get("pp_meta", {}),
+            }
+        )
+    else:
+        _emit_obj({"ok": False, "stage": payload.get("stage", "predict"), "err": payload.get("err", "unknown")})
+    _stage(f"predict_done(single) {image_path.name}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("image_path", nargs="?", help="single image path (e.g., P001.png)")
+    parser.add_argument("--pages_dir", required=False, help="directory containing P*.png files (batch mode)")
+    parser.add_argument("--dpi", type=int, default=250, help="reserved (compat); not used by this runner")
+    args = parser.parse_args()
+
+    if args.pages_dir:
+        run_pages_dir(Path(args.pages_dir))
+        return
+
+    if args.image_path:
+        run_single_image(Path(args.image_path))
+        return
+
+    _emit_obj({"ok": False, "stage": "args", "err": "usage: v3_isolation_runner.py (--pages_dir DIR) | (image_path)"})
 
 
 if __name__ == "__main__":
