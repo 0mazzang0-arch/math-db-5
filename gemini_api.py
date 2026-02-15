@@ -155,6 +155,7 @@ Your duty is to extract content from handwritten math solutions with **Zero Tole
 3. **MANDATORY TAGS:** Specifically, `[[VERBATIM_START]]`, `[[AI_SOLUTION_START]]`, and `[[STRATEGY_START]]` are **REQUIRED** for the system to work. If they are missing, the system crashes.
 
 [[STRATEGY_START]]
+**LANGUAGE LOCK:** STRATEGY는 반드시 100% 한국어로 작성하라. 영어 단어가 필요하면 괄호로 한 번만 병기하고, 문장 본문은 한국어로 유지하라.
 (Step-by-step Roadmap: 1. ... 2. ...)
 [[STRATEGY_END]]
 
