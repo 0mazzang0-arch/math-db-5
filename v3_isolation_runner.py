@@ -325,6 +325,7 @@ def run_pages_dir(pages_dir: Path, warmup: bool = True, profile: str = "fast", f
         _emit_json({"ok": False, "page_file": "", "stage": "args", "err": f"invalid pages_dir: {pages_dir}"})
         return
 
+    init_start = time.perf_counter()
     try:
         page_files = _sorted_page_files(pages_dir)
         _stage(f"start pages={len(page_files)} profile={profile}")
@@ -414,6 +415,8 @@ def main() -> None:
         help="force region detection override (-1: profile default)",
     )
     args = parser.parse_args()
+
+    warmup_enabled = bool(args.warmup)
 
     if args.pages_dir:
         run_pages_dir(

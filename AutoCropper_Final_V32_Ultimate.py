@@ -42,7 +42,7 @@ if not os.path.exists(DEFAULT_WORK_DIR):
     except: pass
 
 # [설정] API 키 (필요시 여기에 입력)
-GOOGLE_API_KEY_HARDCODED = "AIzaSyBO9106GmrTWQYTrwzeDbM_d-F1n9gMlGs" 
+GOOGLE_API_KEY_HARDCODED = config.GOOGLE_API_KEYS[0] if config.GOOGLE_API_KEYS else None
 MODEL_NAME = "gemini-3-flash-preview"
 # =========================================================
 
