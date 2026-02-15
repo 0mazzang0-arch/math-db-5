@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import queue
@@ -25,6 +26,8 @@ os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
 
+GLOBAL_ISOLATION_MODE = os.environ.get("PPSTRUCTURE_V3_ISOLATION", "0").strip().lower() in {"1", "true", "yes", "on"}
+
 try:
     import cv2
 except Exception:
@@ -34,12 +37,16 @@ try:
 except Exception:
     np = None
 
-try:
-    from paddleocr import PPStructureV3
-    PADDLE_OCR_AVAILABLE = True
-except Exception:
+if not GLOBAL_ISOLATION_MODE:
+    try:
+        from paddleocr import PPStructureV3
+        PADDLE_OCR_AVAILABLE = True
+    except Exception:
+        PPStructureV3 = None
+        PADDLE_OCR_AVAILABLE = False
+else:
     PPStructureV3 = None
-    PADDLE_OCR_AVAILABLE = False
+    PADDLE_OCR_AVAILABLE = True
 
 APP_TITLE = "PDF Cutter Experiment GUI"
 DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parent / "pdf_cutter_output"
@@ -67,22 +74,28 @@ class PageTask:
 
 
 class PaddleStructureClient:
+    ISOLATION_MODE = GLOBAL_ISOLATION_MODE
+
     def __init__(self) -> None:
-        self.enabled = bool(PADDLE_OCR_AVAILABLE and cv2 is not None and np is not None)
+        self.enabled = bool((self.ISOLATION_MODE or PADDLE_OCR_AVAILABLE) and cv2 is not None and np is not None)
         self._engine: Optional[Any] = None
         self.paddleocr_version = "unknown"
         self.paddle_version = "unknown"
         self.init_error: Optional[str] = None
-        try:
-            import paddleocr as _pocr  # type: ignore
-            self.paddleocr_version = getattr(_pocr, "__version__", "unknown")
-        except Exception:
-            pass
-        try:
-            import paddle  # type: ignore
-            self.paddle_version = getattr(paddle, "__version__", "unknown")
-        except Exception:
-            pass
+        if not self.ISOLATION_MODE:
+            try:
+                import paddleocr as _pocr  # type: ignore
+                self.paddleocr_version = getattr(_pocr, "__version__", "unknown")
+            except Exception:
+                pass
+            try:
+                import paddle  # type: ignore
+                self.paddle_version = getattr(paddle, "__version__", "unknown")
+            except Exception:
+                pass
+        else:
+            self.paddleocr_version = "isolation-subprocess"
+            self.paddle_version = "isolation-subprocess"
 
     def _ensure_engine(self) -> Tuple[bool, Optional[str]]:
         if not self.enabled:
@@ -126,6 +139,10 @@ class PaddleStructureClient:
                 cand = first.get(k)
                 if isinstance(cand, dict):
                     return cand
+        for attr in ("result", "res", "data"):
+            cand = getattr(first, attr, None)
+            if isinstance(cand, dict):
+                return cand
         return None
 
     @staticmethod
@@ -133,6 +150,67 @@ class PaddleStructureClient:
         if isinstance(obj, dict):
             return sorted([str(k) for k in obj.keys()])
         return []
+
+    @staticmethod
+    def _extract_first_object_fields(first: Any) -> Dict[str, Any]:
+        fields: Dict[str, Any] = {}
+        keys = ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]
+        if isinstance(first, dict):
+            for key in keys:
+                if key in first:
+                    fields[key] = first.get(key)
+            return fields
+        for key in keys:
+            try:
+                value = getattr(first, key, None)
+            except Exception:
+                value = None
+            if value is not None:
+                fields[key] = value
+        return fields
+
+    @staticmethod
+    def _safe_object_dir_keys(obj: Any, limit: int = 80) -> List[str]:
+        if obj is None or isinstance(obj, dict):
+            return []
+        try:
+            names = [n for n in dir(obj) if not n.startswith("_")]
+            return sorted(names)[:limit]
+        except Exception:
+            return []
+
+    def _run_isolation_runner(self, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        runner_path = Path(__file__).resolve().parent / "v3_isolation_runner.py"
+        if not runner_path.exists():
+            return None, "stage=isolation_runner err=runner file not found"
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(runner_path), str(image_path)],
+                capture_output=True,
+                text=True,
+                timeout=900,
+                check=False,
+            )
+            out = (proc.stdout or "").strip()
+            if not out:
+                stderr_tail = (proc.stderr or "").strip()[-2000:]
+                return None, f"stage=isolation_runner err=empty stdout stderr={stderr_tail}"
+            payload = json.loads(out)
+            if not isinstance(payload, dict):
+                return None, "stage=isolation_runner err=invalid payload"
+            if payload.get("ok") and isinstance(payload.get("pp_json"), dict):
+                return {
+                    "pp_json": payload["pp_json"],
+                    "pp_obj": payload.get("pp_obj", {}),
+                    "pp_meta": {"mode": "isolation_subprocess", "fallback": "v3_isolation_runner"},
+                }, None
+            stderr_tail = (proc.stderr or "").strip()[-2000:]
+            return None, f"stage={payload.get('stage','isolation_runner')} err={payload.get('err','unknown')} stderr_tail={stderr_tail}"
+        except subprocess.TimeoutExpired as e:
+            stderr_tail = ((e.stderr or "") if isinstance(e.stderr, str) else str(e.stderr or "")).strip()[-2000:]
+            return None, f"stage=isolation_runner_timeout err=timeout stderr_tail={stderr_tail}"
+        except Exception as e:
+            return None, f"stage=isolation_runner err={e}"
 
     @staticmethod
     def _is_unimplemented_runtime_error(err: Exception) -> bool:
@@ -200,6 +278,11 @@ class PaddleStructureClient:
     def detect(self, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         if not self.enabled or cv2 is None or np is None:
             return None, "PaddleOCR 설치 필요: pip install paddlepaddle paddleocr"
+        if self.ISOLATION_MODE:
+            isolated, isolated_err = self._run_isolation_runner(image_path)
+            if isolated is not None:
+                return isolated, None
+            return None, isolated_err
         ok, init_err = self._ensure_engine()
         if not ok:
             return None, f"{init_err} {PIN_GUIDE}"
@@ -231,11 +314,13 @@ class PaddleStructureClient:
 
         first = self._first_output(output)
         j = self._extract_json(first)
+        pp_obj = self._extract_first_object_fields(first)
         if not isinstance(j, dict):
             meta = {
                 "output_type": type(output).__name__,
                 "first_type": type(first).__name__ if first is not None else "None",
                 "first_keys": self._safe_keys(first),
+                "first_dir_keys": self._safe_object_dir_keys(first),
             }
             return None, f"stage=parse_json invalid json payload meta={json.dumps(meta, ensure_ascii=False)}"
 
@@ -246,7 +331,7 @@ class PaddleStructureClient:
             "json_keys": self._safe_keys(j),
         }
         _ = pp_meta
-        return {"pp_json": j}, None
+        return {"pp_json": j, "pp_obj": pp_obj, "pp_meta": pp_meta}, None
 
 # =========================================================
 # 유틸 함수 모음
@@ -351,6 +436,7 @@ class PDFCutterApp:
         self.input_files: List[Path] = []
         self.stop_event = threading.Event()
         self.worker_thread: Optional[threading.Thread] = None
+        self.warmup_thread: Optional[threading.Thread] = None
         self.log_queue: "queue.Queue[str]" = queue.Queue()
 
         self.output_root_var = tk.StringVar(value=str(DEFAULT_OUTPUT_ROOT))
@@ -415,6 +501,8 @@ class PDFCutterApp:
         self.start_btn.pack(side=tk.LEFT, padx=4)
         self.stop_btn = ttk.Button(ctl_frame, text="Stop", command=self.stop, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=4)
+        self.warmup_btn = ttk.Button(ctl_frame, text="V3 모델 캐시 워밍업", command=self.warmup_v3_cache)
+        self.warmup_btn.pack(side=tk.LEFT, padx=4)
 
         ttk.Label(ctl_frame, textvariable=self.progress_label_var).pack(side=tk.LEFT, padx=16)
 
@@ -488,6 +576,51 @@ class PDFCutterApp:
         self.worker_thread = threading.Thread(target=self._run_pipeline, daemon=True)
         self.worker_thread.start()
 
+    def warmup_v3_cache(self) -> None:
+        if self.warmup_thread and self.warmup_thread.is_alive():
+            self.log("⚠️ V3 워밍업이 이미 실행 중입니다.")
+            return
+        self.warmup_btn.configure(state=tk.DISABLED)
+        self.warmup_thread = threading.Thread(target=self._run_warmup_subprocess, daemon=True)
+        self.warmup_thread.start()
+
+    def _run_warmup_subprocess(self) -> None:
+        cmd = [
+            sys.executable,
+            "-c",
+            "from paddleocr import PPStructureV3; print('warmup'); PPStructureV3(); print('ok')",
+        ]
+        self.log(f"ℹ️ [Warmup] start cmd={' '.join(cmd[:2])} ...")
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+
+            def _pump(stream, prefix: str) -> None:
+                if stream is None:
+                    return
+                for line in stream:
+                    self.log(f"{prefix} {line.rstrip()}")
+
+            t_out = threading.Thread(target=_pump, args=(proc.stdout, "[Warmup][stdout]"), daemon=True)
+            t_err = threading.Thread(target=_pump, args=(proc.stderr, "[Warmup][stderr]"), daemon=True)
+            t_out.start()
+            t_err.start()
+            try:
+                rc = proc.wait(timeout=900)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                self.log("❌ [Warmup] timeout(900s)")
+                rc = -1
+            t_out.join(timeout=2)
+            t_err.join(timeout=2)
+            if rc == 0:
+                self.log("✅ [Warmup] 완료")
+            else:
+                self.log(f"❌ [Warmup] 실패 rc={rc}")
+        except Exception as e:
+            self.log(f"❌ [Warmup] stage=run err={e}")
+        finally:
+            self.root.after(0, lambda: self.warmup_btn.configure(state=tk.NORMAL))
+
     def stop(self) -> None:
         self.stop_event.set()
         self.log("🛑 Stop 요청 수신: 현재 작업 이후 즉시 중단합니다.")
@@ -500,6 +633,13 @@ class PDFCutterApp:
         try:
             output_root = Path(self.output_root_var.get())
             workers = max(MIN_WORKERS, min(MAX_WORKERS, int(self.workers_var.get())))
+            if self.paddle_client.ISOLATION_MODE and workers != 1:
+                self.log("⚠ Isolation mode: workers forced to 1")
+                workers = 1
+                self.root.after(0, lambda: self.workers_var.set(1))
+            elif self.paddle_client.ISOLATION_MODE:
+                self.log("⚠ Isolation mode: workers forced to 1")
+                workers = 1
             dpi = max(MIN_DPI, min(MAX_DPI, int(self.dpi_var.get())))
 
             (output_root / "out_pages").mkdir(parents=True, exist_ok=True)
@@ -640,12 +780,17 @@ class PDFCutterApp:
                 stage = "detect"
                 if raw and "stage=" in raw:
                     stage = raw.split("stage=", 1)[1].split()[0]
+                extras = None
+                if raw and "stderr_tail=" in raw:
+                    stderr_tail = raw.split("stderr_tail=", 1)[1][:2000]
+                    extras = {"stderr_tail": stderr_tail}
                 self._write_page_error(
                     errors_dir,
                     task.page_number,
                     task.page_png_path,
                     raw or "parse failed",
                     stage=stage,
+                    extras=extras,
                 )
                 self.log(f"❌ [Fail] P{task.page_number:03d} stage={stage} err={(raw or 'parse fail')}")
                 if stage == "paddle_runtime_unimplemented":
@@ -809,8 +954,51 @@ class PDFCutterApp:
                 out.append((text, bbox))
         return out
 
+    @staticmethod
+    def _obj_get(source: Any, key: str, default: Any = None) -> Any:
+        if isinstance(source, dict):
+            return source.get(key, default)
+        try:
+            value = getattr(source, key, default)
+        except Exception:
+            value = default
+        return default if value is None else value
+
+    @staticmethod
+    def _ensure_list(source: Any) -> List[Any]:
+        if isinstance(source, list):
+            return source
+        if isinstance(source, tuple):
+            return list(source)
+        return []
+
+    def _collect_text_candidates_from_source(self, source: Any, trace_samples: List[Dict[str, Any]], cap: int = 40) -> List[Tuple[str, List[int]]]:
+        results: List[Tuple[str, List[int]]] = []
+        if source is None:
+            return results
+        for txt, bbox in self._extract_text_bbox_candidates(source):
+            if bbox is None:
+                continue
+            if len(trace_samples) < cap and TRACE_MODE:
+                trace_samples.append({"text": txt, "bbox": bbox})
+            results.append((str(txt), bbox))
+        return results
+
     def _normalize_structure(self, data: Dict[str, Any], page_w: int, page_h: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         pp_json = data.get("pp_json", {}) if isinstance(data, dict) else {}
+        pp_obj = data.get("pp_obj", {}) if isinstance(data, dict) else {}
+        if isinstance(pp_json, dict) and isinstance(pp_json.get("res"), str):
+            try:
+                parsed_res = ast.literal_eval(pp_json.get("res"))
+                if isinstance(parsed_res, dict):
+                    pp_json["res"] = parsed_res
+                else:
+                    if isinstance(data, dict):
+                        data.setdefault("_parse_errors", []).append("stage=parse_json res string did not evaluate to dict")
+            except Exception as e:
+                if isinstance(data, dict):
+                    data.setdefault("_parse_errors", []).append(f"stage=parse_json res string parse failed err={e}")
+
         layout = self._pick_list_by_keys(pp_json, ["prunedResult", "res", "result", "layout", "outputs", "regions"])
         if not layout:
             layout = self._pick_list_by_keys(data.get("layout", []) if isinstance(data, dict) else [], ["res", "layout"])
@@ -822,9 +1010,39 @@ class PDFCutterApp:
 
         strict_pat = re.compile(r"^\s*\d{4}\s*$")
         weak_pat = re.compile(r"^\s*0*\d{1,4}\s*$")
+        leading_num_pat = re.compile(r"^\s*0*(\d{1,4})([.)]|\s|$)")
         anchors: List[Dict[str, Any]] = []
         weak_anchor_candidates: List[Dict[str, Any]] = []
         objects: List[Dict[str, Any]] = []
+
+        ocr_candidate_sources: List[Any] = []
+        ocr_candidate_sources.append(self._obj_get(pp_obj, "overall_ocr_res"))
+        for parsing_item in self._ensure_list(self._obj_get(pp_obj, "parsing_res_list")):
+            ocr_candidate_sources.append(self._obj_get(parsing_item, "overall_ocr_res"))
+        for obj_key in ("region_det_res", "layout_det_res"):
+            ocr_candidate_sources.append(self._obj_get(pp_obj, obj_key))
+
+        for source in ocr_candidate_sources:
+            for txt, line_bbox in self._collect_text_candidates_from_source(source, trace_samples):
+                m = leading_num_pat.match(txt)
+                if not m:
+                    continue
+                qid = int(m.group(1))
+                if qid == 0 or qid > 9999:
+                    continue
+                lx1, ly1, lx2, ly2 = line_bbox
+                bw = max(0, lx2 - lx1)
+                bh = max(0, ly2 - ly1)
+                cx = (line_bbox[0] + line_bbox[2]) / 2
+                col = 0 if cx < (page_w * 0.5) else 1
+
+                if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
+                    continue
+                if col == 0 and lx1 > (0.35 * page_w):
+                    continue
+                if col == 1 and lx1 < (0.50 * page_w):
+                    continue
+                weak_anchor_candidates.append({"id": qid, "bbox": line_bbox, "col": col})
 
         for block in layout:
             if not isinstance(block, dict):
@@ -852,9 +1070,15 @@ class PDFCutterApp:
                         trace_samples.append({"text": txt, "bbox": line_bbox})
                     is_strict = bool(strict_pat.match(txt))
                     is_weak = bool(weak_pat.match(txt))
+                    m = leading_num_pat.match(txt)
                     if not (is_strict or is_weak):
+                        if m:
+                            is_weak = True
+                        else:
+                            continue
+                    qid = int(m.group(1)) if m else (int(txt) if txt else 0)
+                    if qid == 0 or qid > 9999:
                         continue
-                    qid = int(txt) if txt else 0
                     lx1, ly1, lx2, ly2 = line_bbox
                     bw = max(0, lx2 - lx1)
                     bh = max(0, ly2 - ly1)
@@ -891,6 +1115,7 @@ class PDFCutterApp:
                 "pp_json_keys": sorted(pp_json.keys()) if isinstance(pp_json, dict) else [],
                 "pp_json_sample": pp_json_sample,
                 "text_candidates": trace_samples,
+                "parse_errors": data.get("_parse_errors", []),
             }
 
         anchors.sort(key=lambda a: (a["col"], a["bbox"][1], a["bbox"][0]))
