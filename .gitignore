@@ -1,8 +1,43 @@
 # 무시할 폴더 및 파일들
 build/
 dist/
-__pycache__/
+
 *.spec
 *.exe
 *.pkg
+
+# 1. 비밀 금고 (절대 업로드 금지!)
+.env
+
+# 2. 파이썬 관련 잡동사니
+__pycache__/
+*.py[cod]
+
+# 3. 로그 파일 (실행 기록)
+*.log
+concept_sync.log
+concept_manager.log
+
+# 4. 데이터베이스 및 캐시 파일 (중요 정보 포함 가능성)
+*.sqlite3
+mathbot.sqlite3
+*.json
+!package.json
+!manifest.json
+notion_db_cache.json
+category_map.json
+concept_book.json
+concept_whitelist.json
+
+# 5. 백업 및 작업 결과 폴더
+concept_history/
+_BACKUP/
 _ERROR_FILES/
+_COMPLETED/
+_MERGED_ORIGINALS/
+
+# 6. 운영체제 관련 파일
+.DS_Store
+Thumbs.db
+.venv311/
+.venv/

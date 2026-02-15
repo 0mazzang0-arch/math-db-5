@@ -80,6 +80,9 @@ def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "") -> float:
     _LAST_EMIT_MS = (time.perf_counter() - emit_start) * 1000.0
     return _LAST_EMIT_MS
 
+    def _key(p: Path):
+        m = re.match(r"^P(\d+)\.png$", p.name)
+        return (0, int(m.group(1)), p.name) if m else (1, 0, p.name)
 
 def _sorted_page_files(pages_dir: Path) -> List[Path]:
     files = [p for p in pages_dir.glob("P*.png") if p.is_file()]
@@ -452,6 +455,8 @@ def main() -> int:
     parser.add_argument("--force_region_detection", type=int, choices=[-1, 0, 1], default=-1)
     parser.add_argument("--payload", choices=["min", "full"], default="min")
     args = parser.parse_args()
+
+    warmup_enabled = bool(args.warmup)
 
     if args.pages_dir:
         return run_pages_dir(
