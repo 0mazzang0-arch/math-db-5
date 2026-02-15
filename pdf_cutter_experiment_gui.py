@@ -712,6 +712,18 @@ class PDFCutterApp:
         total_errors = 0
         done_pages = 0
 
+        if paddle_client.ISOLATION_MODE:
+            return self._process_pdf_isolation_batch(
+                tasks=tasks,
+                pages_dir=pages_dir,
+                crops_dir=crops_dir,
+                errors_dir=errors_dir,
+                pdf_stem=pdf_stem,
+                dpi=dpi,
+                total_pages_all=total_pages_all,
+                processed_pages_before=processed_pages_before,
+            )
+
         pending: Dict[Any, PageTask] = {}
         with ThreadPoolExecutor(max_workers=workers) as executor:
             task_iter = iter(tasks)
@@ -747,6 +759,220 @@ class PDFCutterApp:
             if self.stop_event.is_set():
                 for fut in pending:
                     fut.cancel()
+
+        return total_saved, total_errors, done_pages
+
+    def _process_pdf_isolation_batch(
+        self,
+        tasks: List[PageTask],
+        pages_dir: Path,
+        crops_dir: Path,
+        errors_dir: Path,
+        pdf_stem: str,
+        dpi: int,
+        total_pages_all: int,
+        processed_pages_before: int,
+    ) -> Tuple[int, int, int]:
+        runner_path = Path(__file__).resolve().parent / "v3_isolation_runner.py"
+        if not runner_path.exists():
+            self.log("❌ [Fail] P000 stage=isolation_runner err=runner file not found")
+            return 0, len(tasks), 0
+
+        task_by_name = {t.page_png_path.name: t for t in tasks}
+        total_saved = 0
+        total_errors = 0
+        done_pages = 0
+
+        cmd = [sys.executable, str(runner_path), "--pages_dir", str(pages_dir), "--dpi", str(dpi)]
+        self.log(f"ℹ️ [IsolationBatch] start pages={len(tasks)}")
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        stdout_queue: "queue.Queue[Optional[str]]" = queue.Queue()
+        stderr_queue: "queue.Queue[Optional[str]]" = queue.Queue()
+
+        def _pump_stdout() -> None:
+            try:
+                if proc.stdout is None:
+                    return
+                for line in proc.stdout:
+                    stdout_queue.put(line)
+            finally:
+                stdout_queue.put(None)
+
+        def _pump_stderr() -> None:
+            try:
+                if proc.stderr is None:
+                    return
+                for line in proc.stderr:
+                    stderr_queue.put(line)
+            finally:
+                stderr_queue.put(None)
+
+        t_out = threading.Thread(target=_pump_stdout, daemon=True)
+        t_err = threading.Thread(target=_pump_stderr, daemon=True)
+        t_out.start()
+        t_err.start()
+
+        stdout_done = False
+        stderr_done = False
+        deadline = time.monotonic() + 1800
+
+        while not stdout_done and not self.stop_event.is_set():
+            while True:
+                try:
+                    line = stderr_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if line is None:
+                    stderr_done = True
+                    break
+                self.log(f"[IsolationRunner] {line.rstrip()}")
+
+            try:
+                line = stdout_queue.get(timeout=0.2)
+            except queue.Empty:
+                if time.monotonic() > deadline:
+                    proc.kill()
+                    self.log("❌ [Fail] P000 stage=isolation_runner_timeout err=no stdout within 1800s")
+                    break
+                continue
+
+            if line is None:
+                stdout_done = True
+                break
+
+            raw_line = line.strip()
+            if not raw_line:
+                continue
+
+            try:
+                payload = json.loads(raw_line)
+            except Exception as e:
+                self.log(f"⚠️ [IsolationBatch] invalid json line err={e}")
+                continue
+
+            page_file = str(payload.get("page_file", ""))
+            task = task_by_name.get(page_file)
+            if task is None:
+                if payload.get("ok") is False:
+                    self.log(f"⚠️ [IsolationBatch] page mapping miss page_file={page_file} stage={payload.get('stage','unknown')}")
+                continue
+
+            done_pages += 1
+            processed = processed_pages_before + done_pages
+            self._set_progress_safe(processed, total_pages_all)
+
+            if not payload.get("ok"):
+                total_errors += 1
+                self._write_page_error(
+                    errors_dir,
+                    task.page_number,
+                    task.page_png_path,
+                    str(payload.get("err", "runner page failed")),
+                    stage=str(payload.get("stage", "runner")),
+                    extras={"runner_payload": payload},
+                )
+                self.log(
+                    f"❌ [Fail] P{task.page_number:03d} stage={payload.get('stage','runner')} err={str(payload.get('err','unknown'))[:200]}"
+                )
+                continue
+
+            img = Image.open(task.page_png_path)
+            w, h = img.size
+            try:
+                data = {
+                    "pp_json": payload.get("pp_json", {}),
+                    "pp_obj": payload.get("pp_obj", {}),
+                    "pp_meta": payload.get("pp_meta", {}),
+                }
+                anchors, objects = self._normalize_structure(data, w, h)
+                if not anchors:
+                    trace = data.get("_trace", {}) if isinstance(data, dict) else {}
+                    total_errors += 1
+                    self._write_page_error(
+                        errors_dir,
+                        task.page_number,
+                        task.page_png_path,
+                        "anchors=0",
+                        stage="parse_anchors",
+                        extras={
+                            "pp_json_keys": trace.get("pp_json_keys", []),
+                            "text_candidates": trace.get("text_candidates", []),
+                            "pp_meta": trace.get("pp_meta", {}),
+                            "pp_json_sample": trace.get("pp_json_sample", {}),
+                            "trace_stats": trace.get("trace_stats", {}),
+                            "pp_obj_keys": trace.get("pp_obj_keys", []),
+                        },
+                    )
+                    self.log(f"❌ [Fail] P{task.page_number:03d} stage=parse_anchors err=anchors=0")
+                    continue
+
+                crops, dropped, errors = self._build_anchor_slice_regions(anchors, objects, w, h)
+                if errors > 0 and not crops:
+                    total_errors += 1
+                    self._write_page_error(
+                        errors_dir,
+                        task.page_number,
+                        task.page_png_path,
+                        "anchor overlap conflict",
+                        stage="slice",
+                        extras={"anchors": len(anchors), "objects": len(objects), "errors": errors},
+                    )
+                    self.log(f"❌ [Fail] P{task.page_number:03d} stage=slice err=anchor overlap conflict")
+                    self.log(
+                        f"🧾 [AnchorSlice] P{task.page_number:03d} anchors={len(anchors)} saved=0 dropped={dropped} errors={errors}"
+                    )
+                    continue
+
+                saved = 0
+                for seq, (qid, x1, y1, x2, y2) in enumerate(crops, start=1):
+                    crop_img = img.crop((x1, y1, x2, y2))
+                    out_name = f"P{task.page_number:03d}_Q{seq:03d}_N{qid:04d}.png"
+                    crop_img.save(crops_dir / out_name)
+                    saved += 1
+
+                if DEBUG_MODE:
+                    self._save_debug_overlay(crops_dir, task.page_number, task.page_png_path, anchors, objects, crops)
+
+                total_saved += saved
+                self.log(
+                    f"🧾 [AnchorSlice] P{task.page_number:03d} anchors={len(anchors)} "
+                    f"saved={saved} dropped={dropped} errors={errors}"
+                )
+            except Exception as e:
+                total_errors += 1
+                self._write_page_error(errors_dir, task.page_number, task.page_png_path, str(e), stage="process_page")
+                self.log(f"❌ [Fail] P{task.page_number:03d} stage=process_page err={str(e)[:200]}")
+            finally:
+                img.close()
+
+        if self.stop_event.is_set():
+            proc.kill()
+
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+
+        while not stderr_done:
+            try:
+                line = stderr_queue.get_nowait()
+            except queue.Empty:
+                break
+            if line is None:
+                stderr_done = True
+                break
+            self.log(f"[IsolationRunner] {line.rstrip()}")
+
+        if proc.returncode not in (0, None):
+            self.log(f"⚠️ [IsolationBatch] runner exit code={proc.returncode}")
 
         return total_saved, total_errors, done_pages
 
@@ -1023,36 +1249,6 @@ class PDFCutterApp:
             results.append((str(txt), bbox))
         return results
 
-    @staticmethod
-    def _obj_get(source: Any, key: str, default: Any = None) -> Any:
-        if isinstance(source, dict):
-            return source.get(key, default)
-        try:
-            value = getattr(source, key, default)
-        except Exception:
-            value = default
-        return default if value is None else value
-
-    @staticmethod
-    def _ensure_list(source: Any) -> List[Any]:
-        if isinstance(source, list):
-            return source
-        if isinstance(source, tuple):
-            return list(source)
-        return []
-
-    def _collect_text_candidates_from_source(self, source: Any, trace_samples: List[Dict[str, Any]], cap: int = 40) -> List[Tuple[str, List[int]]]:
-        results: List[Tuple[str, List[int]]] = []
-        if source is None:
-            return results
-        for txt, bbox in self._extract_text_bbox_candidates(source):
-            if bbox is None:
-                continue
-            if len(trace_samples) < cap and TRACE_MODE:
-                trace_samples.append({"text": txt, "bbox": bbox})
-            results.append((str(txt), bbox))
-        return results
-
     def _normalize_structure(self, data: Dict[str, Any], page_w: int, page_h: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         pp_json = data.get("pp_json", {}) if isinstance(data, dict) else {}
         pp_obj = data.get("pp_obj", {}) if isinstance(data, dict) else {}
@@ -1212,35 +1408,6 @@ class PDFCutterApp:
                     break
             if len(records) >= candidate_cap:
                 break
-
-        ocr_candidate_sources: List[Any] = []
-        ocr_candidate_sources.append(self._obj_get(pp_obj, "overall_ocr_res"))
-        for parsing_item in self._ensure_list(self._obj_get(pp_obj, "parsing_res_list")):
-            ocr_candidate_sources.append(self._obj_get(parsing_item, "overall_ocr_res"))
-        for obj_key in ("region_det_res", "layout_det_res"):
-            ocr_candidate_sources.append(self._obj_get(pp_obj, obj_key))
-
-        for source in ocr_candidate_sources:
-            for txt, line_bbox in self._collect_text_candidates_from_source(source, trace_samples):
-                m = leading_num_pat.match(txt)
-                if not m:
-                    continue
-                qid = int(m.group(1))
-                if qid == 0 or qid > 9999:
-                    continue
-                lx1, ly1, lx2, ly2 = line_bbox
-                bw = max(0, lx2 - lx1)
-                bh = max(0, ly2 - ly1)
-                cx = (line_bbox[0] + line_bbox[2]) / 2
-                col = 0 if cx < (page_w * 0.5) else 1
-
-                if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
-                    continue
-                if col == 0 and lx1 > (0.35 * page_w):
-                    continue
-                if col == 1 and lx1 < (0.50 * page_w):
-                    continue
-                weak_anchor_candidates.append({"id": qid, "bbox": line_bbox, "col": col})
 
         for block in layout:
             if not isinstance(block, dict):
