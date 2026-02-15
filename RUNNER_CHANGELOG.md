@@ -19,6 +19,8 @@
 
 - `pdf_cutter_experiment_gui.py`
   - 옵션에 `정밀모드(full)` 체크박스 추가 (기본 OFF=fast).
+  - GUI 시작 시 `PPSTRUCTURE_V3_ISOLATION=1`을 자동 강제 세팅(수동 PowerShell 입력 불필요).
+  - 러너 subprocess 호출마다 `env=os.environ.copy()` 기반으로 isolation env를 명시 전달.
   - 러너 배치 호출 시 `--profile` 전달.
   - 시작 시 현재 profile을 환경변수(`PPSTRUCTURE_V3_PROFILE`)로 반영하여 단일 러너 호출도 동일 profile 사용.
   - fast에서 `anchors=0`인 페이지는 해당 페이지만 자동 재시도:

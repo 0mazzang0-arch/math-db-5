@@ -25,6 +25,7 @@ os.environ["FLAGS_use_onednn"] = "0"
 os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
+os.environ["PPSTRUCTURE_V3_ISOLATION"] = "1"
 
 GLOBAL_ISOLATION_MODE = os.environ.get("PPSTRUCTURE_V3_ISOLATION", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -192,6 +193,7 @@ class PaddleStructureClient:
                 errors="replace",
                 timeout=900,
                 check=False,
+                env=self._isolation_env(),
             )
             lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
             if not lines:
@@ -270,6 +272,7 @@ class PaddleStructureClient:
                 errors="replace",
                 timeout=180,
                 check=False,
+                env=self._isolation_env(),
             )
             lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
             if not lines:
@@ -564,6 +567,12 @@ class PDFCutterApp:
     def _runner_profile(self) -> str:
         return "full" if bool(self.full_profile_var.get()) else "fast"
 
+    def _isolation_env(self) -> Dict[str, str]:
+        os.environ["PPSTRUCTURE_V3_ISOLATION"] = "1"
+        env = os.environ.copy()
+        env["PPSTRUCTURE_V3_ISOLATION"] = "1"
+        return env
+
     def log(self, message: str) -> None:
         self.log_queue.put(message)
 
@@ -602,8 +611,9 @@ class PDFCutterApp:
         self.stop_btn.configure(state=tk.NORMAL)
         self.progress_var.set(0)
         self.progress_label_var.set("진행률: 0/0")
+        os.environ["PPSTRUCTURE_V3_ISOLATION"] = "1"
         os.environ["PPSTRUCTURE_V3_PROFILE"] = self._runner_profile()
-        self.log(f"ℹ️ Runner profile={self._runner_profile()}")
+        self.log(f"ℹ️ Runner profile={self._runner_profile()} isolation=1")
 
         self.worker_thread = threading.Thread(target=self._run_pipeline, daemon=True)
         self.worker_thread.start()
@@ -617,6 +627,7 @@ class PDFCutterApp:
         self.warmup_thread.start()
 
     def _run_warmup_subprocess(self) -> None:
+        os.environ["PPSTRUCTURE_V3_ISOLATION"] = "1"
         cmd = [
             sys.executable,
             "-c",
@@ -624,7 +635,14 @@ class PDFCutterApp:
         ]
         self.log(f"ℹ️ [Warmup] start cmd={' '.join(cmd[:2])} ...")
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                env=self._isolation_env(),
+            )
 
             def _pump(stream, prefix: str) -> None:
                 if stream is None:
@@ -814,6 +832,7 @@ class PDFCutterApp:
                 errors="replace",
                 timeout=240,
                 check=False,
+                env=self._isolation_env(),
             )
             for line in reversed((proc.stdout or "").splitlines()):
                 raw = line.strip()
@@ -862,6 +881,7 @@ class PDFCutterApp:
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            env=self._isolation_env(),
         )
 
         stdout_queue: "queue.Queue[Optional[str]]" = queue.Queue()
