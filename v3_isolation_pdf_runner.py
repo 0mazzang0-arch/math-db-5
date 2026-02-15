@@ -2,7 +2,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["FLAGS_use_mkldnn"] = "0"
@@ -11,13 +11,40 @@ os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
 
+# stdout/stderr 인코딩은 유지하고, 인코딩 불가 문자만 \uXXXX로 escape해서
+# print 단계에서 절대 죽지 않게 함.
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")  # type: ignore[attr-defined]
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(errors="backslashreplace")  # type: ignore[attr-defined]
+except Exception:
+    pass
+
 
 def _stage(msg: str) -> None:
     print(f"[stage] {msg}", file=sys.stderr, flush=True)
 
 
+def _default(obj: Any) -> Any:
+    try:
+        import numpy as np
+
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+    except Exception:
+        pass
+    if isinstance(obj, Path):
+        return str(obj)
+    return str(obj)
+
+
 def _emit(payload: Dict[str, Any]) -> None:
-    print(json.dumps(payload, ensure_ascii=False), flush=True)
+    print(json.dumps(payload, ensure_ascii=False, default=_default), flush=True)
 
 
 def _first_output(output: Any) -> Any:
@@ -121,7 +148,14 @@ def main() -> None:
                     if not isinstance(pp_json, dict):
                         wf.write(json.dumps({"page": page_no, "ok": False, "stage": "parse_json", "err": "invalid json payload"}, ensure_ascii=False) + "\n")
                         continue
-                    wf.write(json.dumps({"page": page_no, "ok": True, "pp_json": pp_json, "pp_obj": _extract_first_object_fields(first)}, ensure_ascii=False) + "\n")
+                    wf.write(
+                        json.dumps(
+                            {"page": page_no, "ok": True, "pp_json": pp_json, "pp_obj": _extract_first_object_fields(first)},
+                            ensure_ascii=False,
+                            default=_default,
+                        )
+                        + "\n"
+                    )
                     _stage(f"predict_done page={page_no}")
                 except Exception as e:
                     wf.write(json.dumps({"page": page_no, "ok": False, "stage": "predict", "err": str(e)}, ensure_ascii=False) + "\n")
