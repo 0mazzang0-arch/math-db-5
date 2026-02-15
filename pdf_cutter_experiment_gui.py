@@ -1,6 +1,8 @@
 import json
 import queue
 import re
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -12,6 +14,14 @@ import fitz  # PyMuPDF
 from PIL import Image
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, ttk
+
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["FLAGS_use_onednn"] = "0"
+os.environ["FLAGS_enable_mkldnn"] = "0"
+os.environ["FLAGS_enable_pir_api"] = "0"
+os.environ["FLAGS_enable_new_ir"] = "0"
+
 try:
     import cv2
 except Exception:
@@ -41,6 +51,11 @@ MAX_DPI = 300
 DEBUG_MODE = True
 TRACE_MODE = True
 MAX_DEBUG_JSON_CHARS = 10_000
+PIN_GUIDE = (
+    "Python 3.11 venv에서 paddlepaddle==3.2.0 + paddleocr==3.3.x로 재설치 필요. "
+    "명령어: python -m venv .venv && source .venv/bin/activate && "
+    "pip install --upgrade pip && pip install paddlepaddle==3.2.0 paddleocr==3.3.0"
+)
 
 
 
@@ -53,7 +68,6 @@ class PageTask:
 
 class PaddleStructureClient:
     def __init__(self) -> None:
-        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
         self.enabled = bool(PADDLE_OCR_AVAILABLE and cv2 is not None and np is not None)
         self._engine: Optional[Any] = None
         self.paddleocr_version = "unknown"
@@ -70,12 +84,17 @@ class PaddleStructureClient:
         except Exception:
             pass
 
-        if self.enabled:
-            try:
-                self._engine = PPStructureV3()
-            except Exception as e:
-                self.enabled = False
-                self.init_error = str(e)
+    def _ensure_engine(self) -> Tuple[bool, Optional[str]]:
+        if not self.enabled:
+            return False, "PaddleOCR 설치 필요: pip install paddlepaddle paddleocr"
+        if self._engine is not None:
+            return True, None
+        try:
+            self._engine = PPStructureV3()
+            return True, None
+        except Exception as e:
+            self.init_error = str(e)
+            return False, f"stage=init_engine err={e}"
 
     @staticmethod
     def _first_output(output: Any) -> Any:
@@ -115,9 +134,83 @@ class PaddleStructureClient:
             return sorted([str(k) for k in obj.keys()])
         return []
 
+    @staticmethod
+    def _is_unimplemented_runtime_error(err: Exception) -> bool:
+        msg = str(err)
+        return (
+            "ConvertPirAttribute2RuntimeAttribute" in msg
+            or "onednn_instruction" in msg
+            or "(Unimplemented)" in msg
+        )
+
+    def _run_subprocess_fallback(self, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        runner_path = Path(__file__).resolve().parent / "v3_runner_tmp.py"
+        script = (
+            "import json, os, sys\n"
+            "os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK']='True'\n"
+            "os.environ['FLAGS_use_mkldnn']='0'\n"
+            "os.environ['FLAGS_use_onednn']='0'\n"
+            "os.environ['FLAGS_enable_mkldnn']='0'\n"
+            "os.environ['FLAGS_enable_pir_api']='0'\n"
+            "os.environ['FLAGS_enable_new_ir']='0'\n"
+            "import cv2, numpy as np\n"
+            "from paddleocr import PPStructureV3\n"
+            "p=sys.argv[1]\n"
+            "raw=cv2.imdecode(np.fromfile(p,dtype=np.uint8), cv2.IMREAD_COLOR)\n"
+            "if raw is None:\n"
+            "    print(json.dumps({'ok':False,'stage':'detect_load','err':'imdecode failed'},ensure_ascii=False)); sys.exit(0)\n"
+            "engine=PPStructureV3()\n"
+            "out=engine.predict(input=raw)\n"
+            "first=next(iter(out),None) if not isinstance(out,(list,tuple,dict)) else (out[0] if isinstance(out,(list,tuple)) and out else out)\n"
+            "j=getattr(first,'json',None)\n"
+            "j=j() if callable(j) else j\n"
+            "if not isinstance(j,dict) and isinstance(first,dict):\n"
+            "    j=first.get('json') or first.get('result') or first.get('res')\n"
+            "if not isinstance(j,dict):\n"
+            "    print(json.dumps({'ok':False,'stage':'parse_json','err':'invalid json'},ensure_ascii=False)); sys.exit(0)\n"
+            "print(json.dumps({'ok':True,'pp_json':j}, ensure_ascii=False))\n"
+        )
+
+        try:
+            runner_path.write_text(script, encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(runner_path), str(image_path)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            out = (proc.stdout or "").strip()
+            if not out:
+                return None, f"stage=fallback_subprocess err=empty stdout {PIN_GUIDE}"
+            payload = json.loads(out)
+            if not isinstance(payload, dict):
+                return None, f"stage=fallback_subprocess err=invalid payload {PIN_GUIDE}"
+            if payload.get("ok") and isinstance(payload.get("pp_json"), dict):
+                return {"pp_json": payload["pp_json"], "pp_meta": {"fallback": "subprocess"}}, None
+            return None, f"stage={payload.get('stage','fallback_subprocess')} err={payload.get('err','unknown')} {PIN_GUIDE}"
+        except Exception as e:
+            return None, f"stage=fallback_subprocess err={e} {PIN_GUIDE}"
+        finally:
+            try:
+                runner_path.unlink(missing_ok=True)
+            except Exception:
+                j = None
+        if isinstance(j, dict):
+            return j
+        if isinstance(first, dict):
+            for k in ("json", "result", "res"):
+                cand = first.get(k)
+                if isinstance(cand, dict):
+                    return cand
+        return None
+
     def detect(self, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        if not self.enabled or self._engine is None or cv2 is None or np is None:
+        if not self.enabled or cv2 is None or np is None:
             return None, "PaddleOCR 설치 필요: pip install paddlepaddle paddleocr"
+        ok, init_err = self._ensure_engine()
+        if not ok:
+            return None, f"{init_err} {PIN_GUIDE}"
         try:
             data = np.fromfile(str(image_path), dtype=np.uint8)
             if data.size == 0:
@@ -130,11 +223,18 @@ class PaddleStructureClient:
 
         output = None
         try:
+            assert self._engine is not None
             output = self._engine.predict(input=raw)
-        except Exception:
+        except Exception as e0:
             try:
+                assert self._engine is not None
                 output = self._engine.predict(input=str(image_path))
             except Exception as e:
+                if self._is_unimplemented_runtime_error(e0) or self._is_unimplemented_runtime_error(e):
+                    fb, fb_err = self._run_subprocess_fallback(image_path)
+                    if fb is not None:
+                        return fb, None
+                    return None, f"stage=paddle_runtime_unimplemented err={e} {PIN_GUIDE}; fallback={fb_err}"
                 return None, f"stage=detect_predict err={e}"
 
         first = self._first_output(output)
@@ -579,7 +679,9 @@ class PDFCutterApp:
                     raw or "parse failed",
                     stage=stage,
                 )
-                self.log(f"❌ [Fail] P{task.page_number:03d} stage={stage} err={(raw or 'parse fail')[:200]}")
+                self.log(f"❌ [Fail] P{task.page_number:03d} stage={stage} err={(raw or 'parse fail')}")
+                if stage == "paddle_runtime_unimplemented":
+                    self.log(f"❌ [Fail] P{task.page_number:03d} stage={stage} err={PIN_GUIDE}")
                 return 0, True
 
             anchors, objects = self._normalize_structure(data, w, h)
@@ -595,6 +697,7 @@ class PDFCutterApp:
                         "pp_json_keys": trace.get("pp_json_keys", []),
                         "text_candidates": trace.get("text_candidates", []),
                         "pp_meta": trace.get("pp_meta", {}),
+                        "pp_json_sample": trace.get("pp_json_sample", {}),
                     },
                 )
                 self.log(f"❌ [Fail] P{task.page_number:03d} stage=parse_anchors err=anchors=0")
@@ -810,9 +913,15 @@ class PDFCutterApp:
             sample = layout[0] if isinstance(layout[0], dict) else {"sample": str(layout[0])}
             self.log(f"⚠️ [PPStructure] anchors=0 sample={json.dumps(sample, ensure_ascii=False)[:400]}")
         if isinstance(data, dict):
+            pp_json_sample: Dict[str, Any] = {}
+            if isinstance(pp_json, dict):
+                for k in list(pp_json.keys())[:5]:
+                    v = pp_json.get(k)
+                    pp_json_sample[str(k)] = str(v)[:200]
             data["_trace"] = {
                 "pp_meta": data.get("pp_meta", {}),
                 "pp_json_keys": sorted(pp_json.keys()) if isinstance(pp_json, dict) else [],
+                "pp_json_sample": pp_json_sample,
                 "text_candidates": trace_samples,
             }
 
