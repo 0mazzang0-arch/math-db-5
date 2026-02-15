@@ -50,3 +50,9 @@ python v3_isolation_runner.py C:/temp/pages/P003.png --profile fast --force_regi
   - `fast` 기본에서 `use_region_detection=True`로 동작(anchors 안정성 우선), `table/formula/chart`만 OFF.
   - stdout JSONL emit은 `ensure_ascii=True`로 고정.
   - `pp_json["res"]`가 문자열이면 `json.loads`/`ast.literal_eval`로 파싱 시도, 실패 시 `pp_json`를 비워 안전 JSON만 출력.
+
+- 디버그/검증 강화
+  - GUI 옵션으로 runner 원본 출력 저장 지원(`runner_out.jsonl`, `runner_err.log`).
+  - fast 모드에서 stderr에 `Chart2Table`/`FormulaNet` 로딩 문자열이 감지되면 경고 1회 출력.
+  - `scripts/validate_jsonl.py` 추가: JSONL 파싱 실패 라인 번호 + 앞뒤 1줄 컨텍스트 출력.
+  - stderr 요약 로그에 `t_init_ms`, `t_predict_ms`, `t_emit_ms` 분리 출력.

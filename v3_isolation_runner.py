@@ -282,8 +282,12 @@ def run_pages_dir(pages_dir: Path, warmup: bool = True, profile: str = "fast", f
     for page_path in page_files:
         payload = _predict_one(engine, page_path, t_init_ms=t_init_ms, profile=profile, force_region_detection=force_region_detection)
         payload.setdefault("profile", profile)
-        _emit_json(payload, fallback_page_file=page_path.name)
-        _stage(f"predict_done {page_path.name} t_page_ms={float(payload.get('t_page_total_ms', 0.0)):.1f}")
+        payload.setdefault("t_emit_ms", 0.0)
+        t_emit_ms = _emit_json(payload, fallback_page_file=page_path.name)
+        _stage(
+            f"predict_done {page_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
+            f"t_predict_ms={float(payload.get('t_predict_ms', 0.0)):.1f} t_emit_ms={t_emit_ms:.1f}"
+        )
 
 
 def run_single_image(image_path: Path, warmup: bool = True, profile: str = "fast", force_region_detection: int = -1) -> None:
@@ -301,8 +305,12 @@ def run_single_image(image_path: Path, warmup: bool = True, profile: str = "fast
 
     _warmup_once(engine, warmup, profile=profile, force_region_detection=force_region_detection)
     payload = _predict_one(engine, image_path, t_init_ms=t_init_ms, profile=profile, force_region_detection=force_region_detection)
-    _emit_json(payload, fallback_page_file=image_path.name)
-    _stage(f"predict_done {image_path.name} t_page_ms={float(payload.get('t_page_total_ms', 0.0)):.1f}")
+    payload.setdefault("t_emit_ms", 0.0)
+    t_emit_ms = _emit_json(payload, fallback_page_file=image_path.name)
+    _stage(
+        f"predict_done {image_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
+        f"t_predict_ms={float(payload.get('t_predict_ms', 0.0)):.1f} t_emit_ms={t_emit_ms:.1f}"
+    )
 
 
 def main() -> None:

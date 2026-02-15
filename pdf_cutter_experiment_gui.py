@@ -473,6 +473,7 @@ class PDFCutterApp:
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_label_var = tk.StringVar(value="진행률: 0/0")
         self.full_profile_var = tk.BooleanVar(value=False)
+        self.save_runner_logs_var = tk.BooleanVar(value=True)
 
         self._build_ui()
         self._start_log_pump()
@@ -523,6 +524,7 @@ class PDFCutterApp:
         ttk.Label(opt_frame, text="DPI").pack(side=tk.LEFT)
         ttk.Spinbox(opt_frame, from_=MIN_DPI, to=MAX_DPI, textvariable=self.dpi_var, width=6).pack(side=tk.LEFT, padx=6)
         ttk.Checkbutton(opt_frame, text="정밀모드(full)", variable=self.full_profile_var).pack(side=tk.LEFT, padx=10)
+        ttk.Checkbutton(opt_frame, text="runner stdout/stderr 저장", variable=self.save_runner_logs_var).pack(side=tk.LEFT, padx=10)
 
         ctl_frame = ttk.Frame(top)
         ctl_frame.pack(fill=tk.X, pady=6)
@@ -873,6 +875,19 @@ class PDFCutterApp:
         cmd = [sys.executable, str(runner_path), "--pages_dir", str(pages_dir), "--dpi", str(dpi), "--profile", profile]
         self.log(f"ℹ️ [IsolationBatch] start pages={len(tasks)} profile={profile}")
 
+        runner_out_fp = None
+        runner_err_fp = None
+        heavy_model_warned = False
+        if bool(self.save_runner_logs_var.get()):
+            try:
+                runner_out_path = errors_dir / "runner_out.jsonl"
+                runner_err_path = errors_dir / "runner_err.log"
+                runner_out_fp = open(runner_out_path, "a", encoding="utf-8")
+                runner_err_fp = open(runner_err_path, "a", encoding="utf-8")
+                self.log(f"ℹ️ [IsolationBatch] runner logs -> {runner_out_path.name}, {runner_err_path.name}")
+            except Exception as e:
+                self.log(f"⚠️ [IsolationBatch] runner log file open failed err={e}")
+
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -923,7 +938,17 @@ class PDFCutterApp:
                 if line is None:
                     stderr_done = True
                     break
-                self.log(f"[IsolationRunner] {line.rstrip()}")
+                if runner_err_fp is not None:
+                    try:
+                        runner_err_fp.write(line)
+                        runner_err_fp.flush()
+                    except Exception:
+                        pass
+                lstr = line.rstrip()
+                self.log(f"[IsolationRunner] {lstr}")
+                if profile == "fast" and ("Chart2Table" in lstr or "FormulaNet" in lstr) and not heavy_model_warned:
+                    heavy_model_warned = True
+                    self.log("⚠️ [IsolationBatch] fast profile but heavy model load log detected (Chart2Table/FormulaNet)")
 
             try:
                 line = stdout_queue.get(timeout=0.2)
@@ -937,6 +962,13 @@ class PDFCutterApp:
             if line is None:
                 stdout_done = True
                 break
+
+            if runner_out_fp is not None:
+                try:
+                    runner_out_fp.write(line)
+                    runner_out_fp.flush()
+                except Exception:
+                    pass
 
             raw_line = line.strip()
             if not raw_line:
@@ -1091,6 +1123,17 @@ class PDFCutterApp:
         if done_pages == 0 and total_saved == 0 and total_errors == 0:
             self.log("❌ [IsolationBatch] runner produced no usable page payloads")
             total_errors = len(tasks)
+
+        if runner_out_fp is not None:
+            try:
+                runner_out_fp.close()
+            except Exception:
+                pass
+        if runner_err_fp is not None:
+            try:
+                runner_err_fp.close()
+            except Exception:
+                pass
 
         return total_saved, total_errors, done_pages
 
