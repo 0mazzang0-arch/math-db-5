@@ -16,12 +16,16 @@ try:
     import cv2
 except Exception:
     cv2 = None
+try:
+    import numpy as np
+except Exception:
+    np = None
 
 try:
-    from paddleocr import PPStructure
+    from paddleocr import PPStructureV3
     PADDLE_OCR_AVAILABLE = True
 except Exception:
-    PPStructure = None
+    PPStructureV3 = None
     PADDLE_OCR_AVAILABLE = False
 
 APP_TITLE = "PDF Cutter Experiment GUI"
@@ -35,6 +39,8 @@ MAX_DPI = 300
 
 
 DEBUG_MODE = True
+TRACE_MODE = True
+MAX_DEBUG_JSON_CHARS = 10_000
 
 
 
@@ -47,28 +53,107 @@ class PageTask:
 
 class PaddleStructureClient:
     def __init__(self) -> None:
-        self.enabled = bool(PADDLE_OCR_AVAILABLE and cv2 is not None)
+        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+        self.enabled = bool(PADDLE_OCR_AVAILABLE and cv2 is not None and np is not None)
         self._engine: Optional[Any] = None
+        self.paddleocr_version = "unknown"
+        self.paddle_version = "unknown"
+        self.init_error: Optional[str] = None
+        try:
+            import paddleocr as _pocr  # type: ignore
+            self.paddleocr_version = getattr(_pocr, "__version__", "unknown")
+        except Exception:
+            pass
+        try:
+            import paddle  # type: ignore
+            self.paddle_version = getattr(paddle, "__version__", "unknown")
+        except Exception:
+            pass
+
         if self.enabled:
-            self._engine = PPStructure(show_log=False, ocr=True, layout=True, table=True)
+            try:
+                self._engine = PPStructureV3()
+            except Exception as e:
+                self.enabled = False
+                self.init_error = str(e)
+
+    @staticmethod
+    def _first_output(output: Any) -> Any:
+        if output is None:
+            return None
+        if isinstance(output, (list, tuple)):
+            return output[0] if output else None
+        if isinstance(output, dict):
+            return output
+        try:
+            return next(iter(output), None)
+        except Exception:
+            return output
+
+    @staticmethod
+    def _extract_json(first: Any) -> Any:
+        if first is None:
+            return None
+        j = getattr(first, "json", None)
+        if callable(j):
+            try:
+                j = j()
+            except Exception:
+                j = None
+        if isinstance(j, dict):
+            return j
+        if isinstance(first, dict):
+            for k in ("json", "result", "res"):
+                cand = first.get(k)
+                if isinstance(cand, dict):
+                    return cand
+        return None
+
+    @staticmethod
+    def _safe_keys(obj: Any) -> List[str]:
+        if isinstance(obj, dict):
+            return sorted([str(k) for k in obj.keys()])
+        return []
 
     def detect(self, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        if not self.enabled or self._engine is None or cv2 is None:
+        if not self.enabled or self._engine is None or cv2 is None or np is None:
             return None, "PaddleOCR 설치 필요: pip install paddlepaddle paddleocr"
         try:
-            raw = cv2.imread(str(image_path))
+            data = np.fromfile(str(image_path), dtype=np.uint8)
+            if data.size == 0:
+                return None, "stage=detect_load empty image buffer"
+            raw = cv2.imdecode(data, cv2.IMREAD_COLOR)
             if raw is None:
-                return None, "Page image load failed"
-            result = self._engine(raw)
-            if isinstance(result, dict):
-                layout = result.get("layout", result.get("res", []))
-            elif isinstance(result, list):
-                layout = result
-            else:
-                layout = []
-            return {"layout": layout}, None
+                return None, "stage=detect_load imdecode failed"
         except Exception as e:
-            return None, f"Exception: {e}"
+            return None, f"stage=detect_load err={e}"
+
+        output = None
+        try:
+            output = self._engine.predict(input=raw)
+        except Exception:
+            try:
+                output = self._engine.predict(input=str(image_path))
+            except Exception as e:
+                return None, f"stage=detect_predict err={e}"
+
+        first = self._first_output(output)
+        j = self._extract_json(first)
+        if not isinstance(j, dict):
+            meta = {
+                "output_type": type(output).__name__,
+                "first_type": type(first).__name__ if first is not None else "None",
+                "first_keys": self._safe_keys(first),
+            }
+            return None, f"stage=parse_json invalid json payload meta={json.dumps(meta, ensure_ascii=False)}"
+
+        pp_meta = {
+            "output_type": type(output).__name__,
+            "first_type": type(first).__name__ if first is not None else "None",
+            "first_keys": self._safe_keys(first),
+            "json_keys": self._safe_keys(j),
+        }
+        return {"pp_json": j, "pp_meta": pp_meta}, None
 
 # =========================================================
 # [GPT-5.3 Codex] 후처리 유틸 함수 모음 (여기에 붙여넣으세요)
@@ -209,8 +294,14 @@ class PDFCutterApp:
         self._start_log_pump()
         self._layout_keys_logged = False
         self.paddle_client = PaddleStructureClient()
+        self.log(
+            f"ℹ️ PaddleOCR={self.paddle_client.paddleocr_version} "
+            f"Paddle={self.paddle_client.paddle_version}"
+        )
         if not self.paddle_client.enabled:
             self.log("PaddleOCR 설치 필요: pip install paddlepaddle paddleocr")
+            if self.paddle_client.init_error:
+                self.log(f"❌ [Fail] P000 stage=init_engine err={self.paddle_client.init_error[:200]}")
             self.start_btn.configure(state=tk.DISABLED)
 
     def _set_progress_safe(self, processed: int, total: int) -> None:
@@ -370,7 +461,7 @@ class PDFCutterApp:
             else:
                 self.log("✅ 전체 작업 완료")
         except Exception as e:
-            self.log(f"❌ [Fail] P000 err={str(e)[:200]}")
+            self.log(f"❌ [Fail] P000 stage=run_pipeline err={str(e)[:200]}")
         finally:
             self.root.after(0, self._finalize_ui)
 
@@ -433,7 +524,7 @@ class PDFCutterApp:
                         total_errors += 1 if is_error else 0
                     except Exception as e:
                         total_errors += 1
-                        self.log(f"❌ [Fail] P{task.page_number:03d} err={str(e)[:200]}")
+                        self.log(f"❌ [Fail] P{task.page_number:03d} stage=future_result err={str(e)[:200]}")
 
                     nxt = next(task_iter, None)
                     if nxt and not self.stop_event.is_set():
@@ -477,14 +568,48 @@ class PDFCutterApp:
         try:
             data, raw = paddle_client.detect(image_path=task.page_png_path)
             if data is None:
-                self._write_page_error(errors_dir, task.page_number, task.page_png_path, raw or "parse failed")
-                self.log(f"❌ [Fail] P{task.page_number:03d} err={(raw or 'parse fail')[:200]}")
+                stage = "detect"
+                if raw and "stage=" in raw:
+                    stage = raw.split("stage=", 1)[1].split()[0]
+                self._write_page_error(
+                    errors_dir,
+                    task.page_number,
+                    task.page_png_path,
+                    raw or "parse failed",
+                    stage=stage,
+                )
+                self.log(f"❌ [Fail] P{task.page_number:03d} stage={stage} err={(raw or 'parse fail')[:200]}")
                 return 0, True
 
             anchors, objects = self._normalize_structure(data, w, h)
+            if not anchors:
+                trace = data.get("_trace", {}) if isinstance(data, dict) else {}
+                self._write_page_error(
+                    errors_dir,
+                    task.page_number,
+                    task.page_png_path,
+                    "anchors=0",
+                    stage="parse_anchors",
+                    extras={
+                        "pp_json_keys": trace.get("pp_json_keys", []),
+                        "text_candidates": trace.get("text_candidates", []),
+                        "pp_meta": trace.get("pp_meta", {}),
+                    },
+                )
+                self.log(f"❌ [Fail] P{task.page_number:03d} stage=parse_anchors err=anchors=0")
+                return 0, True
+
             crops, dropped, errors = self._build_anchor_slice_regions(anchors, objects, w, h)
             if errors > 0 and not crops:
-                self._write_page_error(errors_dir, task.page_number, task.page_png_path, "anchor overlap conflict")
+                self._write_page_error(
+                    errors_dir,
+                    task.page_number,
+                    task.page_png_path,
+                    "anchor overlap conflict",
+                    stage="slice",
+                    extras={"anchors": len(anchors), "objects": len(objects), "errors": errors},
+                )
+                self.log(f"❌ [Fail] P{task.page_number:03d} stage=slice err=anchor overlap conflict")
                 self.log(f"🧾 [AnchorSlice] P{task.page_number:03d} anchors={len(anchors)} saved=0 dropped={dropped} errors={errors}")
                 return 0, True
 
@@ -506,24 +631,41 @@ class PDFCutterApp:
             )
             return saved, False
         except Exception as e:
-            self._write_page_error(errors_dir, task.page_number, task.page_png_path, str(e))
-            self.log(f"❌ [Fail] P{task.page_number:03d} err={str(e)[:200]}")
+            self._write_page_error(errors_dir, task.page_number, task.page_png_path, str(e), stage="process_page")
+            self.log(f"❌ [Fail] P{task.page_number:03d} stage=process_page err={str(e)[:200]}")
             return 0, True
         finally:
             img.close()
 
-    def _write_page_error(self, errors_dir: Path, page_num: int, png_src: Path, raw_text: str) -> None:
+    def _write_page_error(
+        self,
+        errors_dir: Path,
+        page_num: int,
+        png_src: Path,
+        raw_text: str,
+        stage: str = "unknown",
+        extras: Optional[Dict[str, Any]] = None,
+    ) -> None:
         png_dst = errors_dir / f"P{page_num:03d}.png"
         json_dst = errors_dir / f"P{page_num:03d}.json"
         try:
             png_dst.write_bytes(png_src.read_bytes())
         except Exception:
             pass
-        payload = {"page": page_num, "raw": raw_text, "timestamp": time.time()}
+        payload = {"page": page_num, "stage": stage, "raw": raw_text[:MAX_DEBUG_JSON_CHARS], "timestamp": time.time()}
+        if extras:
+            payload.update(extras)
         json_dst.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @staticmethod
     def _poly_to_bbox(poly: Any) -> Optional[List[int]]:
+        if isinstance(poly, dict):
+            for key in ("points", "bbox", "xyxy", "box", "polygon", "text_region"):
+                if key in poly:
+                    return PDFCutterApp._poly_to_bbox(poly.get(key))
+            if all(k in poly for k in ("x1", "y1", "x2", "y2")):
+                return PDFCutterApp._poly_to_bbox([poly.get("x1"), poly.get("y1"), poly.get("x2"), poly.get("y2")])
+
         if not isinstance(poly, (list, tuple)):
             return None
 
@@ -551,14 +693,56 @@ class PDFCutterApp:
             return None
         return [x1, y1, x2, y2]
 
+    @staticmethod
+    def _pick_list_by_keys(source: Any, keys: List[str]) -> List[Any]:
+        if isinstance(source, list):
+            return source
+        if isinstance(source, dict):
+            for key in keys:
+                val = source.get(key)
+                if isinstance(val, list):
+                    return val
+        return []
+
+    @staticmethod
+    def _extract_text_bbox_candidates(item: Any) -> List[Tuple[str, Optional[List[int]]]]:
+        out: List[Tuple[str, Optional[List[int]]]] = []
+        if isinstance(item, dict):
+            text = ""
+            for k in ("text", "ocrText", "rec_text", "content"):
+                if isinstance(item.get(k), str):
+                    text = item.get(k).strip()
+                    if text:
+                        break
+            bbox = None
+            for bk in ("text_region", "bbox", "xyxy", "points", "polygon"):
+                if bk in item:
+                    bbox = PDFCutterApp._poly_to_bbox(item.get(bk))
+                    if bbox is not None:
+                        break
+            if text:
+                out.append((text, bbox))
+            for lk in ("words", "lines", "text_lines", "ocr", "ocr_result"):
+                for node in PDFCutterApp._pick_list_by_keys(item.get(lk), [lk]):
+                    out.extend(PDFCutterApp._extract_text_bbox_candidates(node))
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            bbox = PDFCutterApp._poly_to_bbox(item[0])
+            text = ""
+            info = item[1]
+            if isinstance(info, (list, tuple)) and info:
+                text = str(info[0]).strip()
+            elif isinstance(info, str):
+                text = info.strip()
+            if text:
+                out.append((text, bbox))
+        return out
+
     def _normalize_structure(self, data: Dict[str, Any], page_w: int, page_h: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        layout_raw = data.get("layout", []) if isinstance(data, dict) else []
-        if isinstance(layout_raw, dict):
-            layout = layout_raw.get("layout", layout_raw.get("res", []))
-        elif isinstance(layout_raw, list):
-            layout = layout_raw
-        else:
-            layout = []
+        pp_json = data.get("pp_json", {}) if isinstance(data, dict) else {}
+        layout = self._pick_list_by_keys(pp_json, ["prunedResult", "res", "result", "layout", "outputs", "regions"])
+        if not layout:
+            layout = self._pick_list_by_keys(data.get("layout", []) if isinstance(data, dict) else [], ["res", "layout"])
+        trace_samples: List[Dict[str, Any]] = []
 
         if DEBUG_MODE and layout and not self._layout_keys_logged and isinstance(layout[0], dict):
             self.log(f"🔎 [PPStructure] layout[0].keys={sorted(layout[0].keys())}")
@@ -567,13 +751,14 @@ class PDFCutterApp:
         strict_pat = re.compile(r"^\s*\d{4}\s*$")
         weak_pat = re.compile(r"^\s*0*\d{1,4}\s*$")
         anchors: List[Dict[str, Any]] = []
+        weak_anchor_candidates: List[Dict[str, Any]] = []
         objects: List[Dict[str, Any]] = []
 
         for block in layout:
             if not isinstance(block, dict):
                 continue
-            btype = str(block.get("type", "text")).lower()
-            bx = self._poly_to_bbox(block.get("bbox"))
+            btype = str(block.get("type", block.get("label", block.get("category", "text")))).lower()
+            bx = self._poly_to_bbox(block.get("bbox")) or self._poly_to_bbox(block)
 
             obj_type = "text"
             if "figure" in btype or "image" in btype:
@@ -585,43 +770,50 @@ class PDFCutterApp:
 
             if btype not in {"text", "title", "list", "paragraph"}:
                 continue
-            lines = block.get("res")
-            if not isinstance(lines, list):
-                continue
-            for line in lines:
-                txt = ""
-                line_bbox = None
-                if isinstance(line, dict):
-                    txt = str(line.get("text", "")).strip()
-                    line_bbox = self._poly_to_bbox(line.get("text_region"))
-                elif isinstance(line, (list, tuple)) and len(line) >= 2:
-                    line_bbox = self._poly_to_bbox(line[0])
-                    info = line[1]
-                    if isinstance(info, (list, tuple)) and info:
-                        txt = str(info[0]).strip()
-                if line_bbox is None:
-                    continue
-                if not (strict_pat.match(txt) or weak_pat.match(txt)):
-                    continue
-                qid = int(txt) if txt else 0
-                lx1, ly1, lx2, ly2 = line_bbox
-                bw = max(0, lx2 - lx1)
-                bh = max(0, ly2 - ly1)
-                cx = (line_bbox[0] + line_bbox[2]) / 2
-                col = 0 if cx < (page_w * 0.5) else 1
+            lines = self._pick_list_by_keys(block, ["res", "words", "lines", "text_lines", "ocr", "ocr_result"])
+            candidate_nodes = [block] + lines
+            for line in candidate_nodes:
+                for txt, line_bbox in self._extract_text_bbox_candidates(line):
+                    if line_bbox is None:
+                        continue
+                    if len(trace_samples) < 20 and TRACE_MODE:
+                        trace_samples.append({"text": txt, "bbox": line_bbox})
+                    is_strict = bool(strict_pat.match(txt))
+                    is_weak = bool(weak_pat.match(txt))
+                    if not (is_strict or is_weak):
+                        continue
+                    qid = int(txt) if txt else 0
+                    lx1, ly1, lx2, ly2 = line_bbox
+                    bw = max(0, lx2 - lx1)
+                    bh = max(0, ly2 - ly1)
+                    cx = (line_bbox[0] + line_bbox[2]) / 2
+                    col = 0 if cx < (page_w * 0.5) else 1
 
-                if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
-                    continue
-                if col == 0 and lx1 > (0.35 * page_w):
-                    continue
-                if col == 1 and lx1 < (0.50 * page_w):
-                    continue
+                    if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
+                        continue
+                    if col == 0 and lx1 > (0.35 * page_w):
+                        continue
+                    if col == 1 and lx1 < (0.50 * page_w):
+                        continue
 
-                anchors.append({"id": qid, "bbox": line_bbox, "col": col})
+                    cand = {"id": qid, "bbox": line_bbox, "col": col}
+                    if is_strict:
+                        anchors.append(cand)
+                    else:
+                        weak_anchor_candidates.append(cand)
+
+        if not anchors and weak_anchor_candidates:
+            anchors = weak_anchor_candidates
 
         if DEBUG_MODE and not anchors and layout:
             sample = layout[0] if isinstance(layout[0], dict) else {"sample": str(layout[0])}
             self.log(f"⚠️ [PPStructure] anchors=0 sample={json.dumps(sample, ensure_ascii=False)[:400]}")
+        if isinstance(data, dict):
+            data["_trace"] = {
+                "pp_meta": data.get("pp_meta", {}),
+                "pp_json_keys": sorted(pp_json.keys()) if isinstance(pp_json, dict) else [],
+                "text_candidates": trace_samples,
+            }
 
         anchors.sort(key=lambda a: (a["col"], a["bbox"][1], a["bbox"][0]))
         return anchors, objects
@@ -722,9 +914,13 @@ class PDFCutterApp:
         objects: List[Dict[str, Any]],
         crops: List[Tuple[int, int, int, int, int]],
     ) -> None:
-        if cv2 is None:
+        if cv2 is None or np is None:
             return
-        canvas = cv2.imread(str(page_png))
+        try:
+            data = np.fromfile(str(page_png), dtype=np.uint8)
+            canvas = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        except Exception:
+            canvas = None
         if canvas is None:
             return
         for a in anchors:
