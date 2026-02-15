@@ -153,7 +153,8 @@ class PaddleStructureClient:
             "first_keys": self._safe_keys(first),
             "json_keys": self._safe_keys(j),
         }
-        return {"pp_json": j, "pp_meta": pp_meta}, None
+        _ = pp_meta
+        return {"pp_json": j}, None
 
 # =========================================================
 # [GPT-5.3 Codex] 후처리 유틸 함수 모음 (여기에 붙여넣으세요)
