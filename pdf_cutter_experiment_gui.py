@@ -188,14 +188,25 @@ class PaddleStructureClient:
                 [sys.executable, str(runner_path), str(image_path)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=900,
                 check=False,
             )
-            out = (proc.stdout or "").strip()
-            if not out:
+            lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            if not lines:
                 stderr_tail = (proc.stderr or "").strip()[-2000:]
                 return None, f"stage=isolation_runner err=empty stdout stderr={stderr_tail}"
-            payload = json.loads(out)
+            payload = None
+            for ln in reversed(lines):
+                try:
+                    payload = json.loads(ln)
+                    break
+                except Exception:
+                    continue
+            if payload is None:
+                stderr_tail = (proc.stderr or "").strip()[-2000:]
+                return None, f"stage=isolation_runner err=invalid json stdout stderr={stderr_tail}"
             if not isinstance(payload, dict):
                 return None, "stage=isolation_runner err=invalid payload"
             if payload.get("ok") and isinstance(payload.get("pp_json"), dict):
@@ -255,13 +266,23 @@ class PaddleStructureClient:
                 [sys.executable, str(runner_path), str(image_path)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=180,
                 check=False,
             )
-            out = (proc.stdout or "").strip()
-            if not out:
+            lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            if not lines:
                 return None, f"stage=fallback_subprocess err=empty stdout {PIN_GUIDE}"
-            payload = json.loads(out)
+            payload = None
+            for ln in reversed(lines):
+                try:
+                    payload = json.loads(ln)
+                    break
+                except Exception:
+                    continue
+            if payload is None:
+                return None, f"stage=fallback_subprocess err=invalid json payload {PIN_GUIDE}"
             if not isinstance(payload, dict):
                 return None, f"stage=fallback_subprocess err=invalid payload {PIN_GUIDE}"
             if payload.get("ok") and isinstance(payload.get("pp_json"), dict):
@@ -791,6 +812,8 @@ class PDFCutterApp:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
         )
 
