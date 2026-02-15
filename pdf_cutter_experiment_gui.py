@@ -265,7 +265,11 @@ class PaddleStructureClient:
             if not isinstance(payload, dict):
                 return None, f"stage=fallback_subprocess err=invalid payload {PIN_GUIDE}"
             if payload.get("ok") and isinstance(payload.get("pp_json"), dict):
-                return {"pp_json": payload["pp_json"], "pp_meta": {"fallback": "subprocess"}}, None
+                return {
+                    "pp_json": payload["pp_json"],
+                    "pp_obj": payload.get("pp_obj", {}),
+                    "pp_meta": {"fallback": "subprocess", "mode": "runtime_unimplemented_fallback"},
+                }, None
             return None, f"stage={payload.get('stage','fallback_subprocess')} err={payload.get('err','unknown')} {PIN_GUIDE}"
         except Exception as e:
             return None, f"stage=fallback_subprocess err={e} {PIN_GUIDE}"
@@ -811,6 +815,8 @@ class PDFCutterApp:
                         "text_candidates": trace.get("text_candidates", []),
                         "pp_meta": trace.get("pp_meta", {}),
                         "pp_json_sample": trace.get("pp_json_sample", {}),
+                        "trace_stats": trace.get("trace_stats", {}),
+                        "pp_obj_keys": trace.get("pp_obj_keys", []),
                     },
                 )
                 self.log(f"❌ [Fail] P{task.page_number:03d} stage=parse_anchors err=anchors=0")
@@ -922,37 +928,100 @@ class PDFCutterApp:
         return []
 
     @staticmethod
-    def _extract_text_bbox_candidates(item: Any) -> List[Tuple[str, Optional[List[int]]]]:
+    def _extract_text_bbox_candidates(
+        item: Any,
+        depth: int = 0,
+        max_depth: int = 4,
+        visited: Optional[set] = None,
+        cap: int = 500,
+    ) -> List[Tuple[str, Optional[List[int]]]]:
         out: List[Tuple[str, Optional[List[int]]]] = []
+        if depth > max_depth or item is None:
+            return out
+        if visited is None:
+            visited = set()
+        try:
+            oid = id(item)
+            if oid in visited:
+                return out
+            visited.add(oid)
+        except Exception:
+            pass
+
         if isinstance(item, dict):
             text = ""
-            for k in ("text", "ocrText", "rec_text", "content"):
+            for k in ("text", "ocrText", "rec_text", "content", "transcription"):
                 if isinstance(item.get(k), str):
                     text = item.get(k).strip()
                     if text:
                         break
             bbox = None
-            for bk in ("text_region", "bbox", "xyxy", "points", "polygon"):
+            for bk in ("text_region", "bbox", "xyxy", "points", "polygon", "poly"):
                 if bk in item:
                     bbox = PDFCutterApp._poly_to_bbox(item.get(bk))
                     if bbox is not None:
                         break
             if text:
                 out.append((text, bbox))
-            for lk in ("words", "lines", "text_lines", "ocr", "ocr_result"):
-                for node in PDFCutterApp._pick_list_by_keys(item.get(lk), [lk]):
-                    out.extend(PDFCutterApp._extract_text_bbox_candidates(node))
-        elif isinstance(item, (list, tuple)) and len(item) >= 2:
-            bbox = PDFCutterApp._poly_to_bbox(item[0])
-            text = ""
-            info = item[1]
-            if isinstance(info, (list, tuple)) and info:
-                text = str(info[0]).strip()
-            elif isinstance(info, str):
-                text = info.strip()
-            if text:
-                out.append((text, bbox))
-        return out
+                if len(out) >= cap:
+                    return out
+
+            for val in item.values():
+                if len(out) >= cap:
+                    break
+                if not isinstance(val, (dict, list, tuple)):
+                    continue
+                out.extend(PDFCutterApp._extract_text_bbox_candidates(val, depth + 1, max_depth, visited, cap - len(out)))
+        elif isinstance(item, (list, tuple)):
+            if len(item) >= 2:
+                bbox = PDFCutterApp._poly_to_bbox(item[0])
+                text = ""
+                info = item[1]
+                if isinstance(info, (list, tuple)) and info:
+                    text = str(info[0]).strip()
+                elif isinstance(info, str):
+                    text = info.strip()
+                if text:
+                    out.append((text, bbox))
+                    if len(out) >= cap:
+                        return out
+            for node in item:
+                if len(out) >= cap:
+                    break
+                if not isinstance(node, (dict, list, tuple)):
+                    continue
+                out.extend(PDFCutterApp._extract_text_bbox_candidates(node, depth + 1, max_depth, visited, cap - len(out)))
+        return out[:cap]
+
+    @staticmethod
+    def _obj_get(source: Any, key: str, default: Any = None) -> Any:
+        if isinstance(source, dict):
+            return source.get(key, default)
+        try:
+            value = getattr(source, key, default)
+        except Exception:
+            value = default
+        return default if value is None else value
+
+    @staticmethod
+    def _ensure_list(source: Any) -> List[Any]:
+        if isinstance(source, list):
+            return source
+        if isinstance(source, tuple):
+            return list(source)
+        return []
+
+    def _collect_text_candidates_from_source(self, source: Any, trace_samples: List[Dict[str, Any]], cap: int = 40) -> List[Tuple[str, List[int]]]:
+        results: List[Tuple[str, List[int]]] = []
+        if source is None:
+            return results
+        for txt, bbox in self._extract_text_bbox_candidates(source):
+            if bbox is None:
+                continue
+            if len(trace_samples) < cap and TRACE_MODE:
+                trace_samples.append({"text": txt, "bbox": bbox})
+            results.append((str(txt), bbox))
+        return results
 
     @staticmethod
     def _obj_get(source: Any, key: str, default: Any = None) -> Any:
@@ -1002,7 +1071,6 @@ class PDFCutterApp:
         layout = self._pick_list_by_keys(pp_json, ["prunedResult", "res", "result", "layout", "outputs", "regions"])
         if not layout:
             layout = self._pick_list_by_keys(data.get("layout", []) if isinstance(data, dict) else [], ["res", "layout"])
-        trace_samples: List[Dict[str, Any]] = []
 
         if DEBUG_MODE and layout and not self._layout_keys_logged and isinstance(layout[0], dict):
             self.log(f"🔎 [PPStructure] layout[0].keys={sorted(layout[0].keys())}")
@@ -1011,9 +1079,139 @@ class PDFCutterApp:
         strict_pat = re.compile(r"^\s*\d{4}\s*$")
         weak_pat = re.compile(r"^\s*0*\d{1,4}\s*$")
         leading_num_pat = re.compile(r"^\s*0*(\d{1,4})([.)]|\s|$)")
+        strict_num_pat = re.compile(r"^\s*0*(\d{1,4})\s*([.)]|$)")
+        fallback_num_pat = re.compile(r"\b0*(\d{1,4})\b")
+
         anchors: List[Dict[str, Any]] = []
-        weak_anchor_candidates: List[Dict[str, Any]] = []
         objects: List[Dict[str, Any]] = []
+        candidate_cap = 500
+        trace_cap = 30
+        token_keys = ("ocr", "text", "rec", "word", "line")
+
+        trace_stats: Dict[str, int] = {
+            "candidate_texts": 0,
+            "candidate_with_bbox": 0,
+            "regex_pass": 0,
+            "passA": 0,
+            "passB": 0,
+            "passC": 0,
+            "anchors": 0,
+        }
+        trace_samples: List[Dict[str, Any]] = []
+
+        def _collect_sources_from_token_keys(root: Any, depth: int = 0, max_depth: int = 4, visited: Optional[set] = None) -> List[Any]:
+            out: List[Any] = []
+            if root is None or depth > max_depth:
+                return out
+            if visited is None:
+                visited = set()
+            rid = id(root)
+            if rid in visited:
+                return out
+            visited.add(rid)
+            if isinstance(root, dict):
+                for k, v in root.items():
+                    key = str(k).lower()
+                    if isinstance(v, (dict, list, tuple)) and any(tok in key for tok in token_keys):
+                        out.append(v)
+                    if isinstance(v, (dict, list, tuple)):
+                        out.extend(_collect_sources_from_token_keys(v, depth + 1, max_depth, visited))
+            elif isinstance(root, (list, tuple)):
+                for it in root:
+                    if isinstance(it, (dict, list, tuple)):
+                        out.extend(_collect_sources_from_token_keys(it, depth + 1, max_depth, visited))
+            return out
+
+        def _parse_qid(txt: str, allow_fallback: bool = False) -> Optional[int]:
+            m = leading_num_pat.match(txt) or strict_num_pat.match(txt)
+            if m:
+                qid0 = int(m.group(1))
+                return qid0 if 0 < qid0 <= 9999 else None
+            if not allow_fallback:
+                return None
+            m2 = fallback_num_pat.search(txt)
+            if not m2:
+                return None
+            qid1 = int(m2.group(1))
+            return qid1 if 0 < qid1 <= 9999 else None
+
+        def _pass_geom(bbox: List[int], stage: str) -> bool:
+            lx1, ly1, lx2, ly2 = bbox
+            bw = max(0, lx2 - lx1)
+            bh = max(0, ly2 - ly1)
+            cx = (lx1 + lx2) / 2
+            col = 0 if cx < (page_w * 0.5) else 1
+            if stage == "A":
+                if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
+                    return False
+                if col == 0 and lx1 > (0.35 * page_w):
+                    return False
+                if col == 1 and lx1 < (0.50 * page_w):
+                    return False
+                return True
+            if stage == "B":
+                if not (bh <= (0.18 * page_h) and bw <= (0.30 * page_w)):
+                    return False
+                if col == 0 and lx1 > (0.35 * page_w):
+                    return False
+                if col == 1 and lx1 < (0.50 * page_w):
+                    return False
+                return True
+            if not (bh <= (0.22 * page_h) and bw <= (0.35 * page_w)):
+                return False
+            if col == 0 and lx1 > (0.40 * page_w):
+                return False
+            if col == 1 and lx1 < (0.45 * page_w):
+                return False
+            return True
+
+        ocr_candidate_sources: List[Any] = []
+        seen_sources: set = set()
+
+        def _push_source(source: Any) -> None:
+            if source is None:
+                return
+            sid = id(source)
+            if sid in seen_sources:
+                return
+            seen_sources.add(sid)
+            ocr_candidate_sources.append(source)
+
+        _push_source(self._obj_get(pp_obj, "overall_ocr_res"))
+        for parsing_item in self._ensure_list(self._obj_get(pp_obj, "parsing_res_list")):
+            _push_source(self._obj_get(parsing_item, "overall_ocr_res"))
+        for obj_key in ("region_det_res", "layout_det_res"):
+            _push_source(self._obj_get(pp_obj, obj_key))
+
+        for src in _collect_sources_from_token_keys(pp_obj):
+            _push_source(src)
+        if isinstance(pp_json, dict):
+            for src in _collect_sources_from_token_keys(pp_json):
+                _push_source(src)
+            if isinstance(pp_json.get("res"), dict):
+                for src in _collect_sources_from_token_keys(pp_json.get("res")):
+                    _push_source(src)
+
+        records: List[Dict[str, Any]] = []
+        rec_seen: set = set()
+
+        for source in ocr_candidate_sources:
+            for txt, line_bbox in self._extract_text_bbox_candidates(source, max_depth=4, cap=candidate_cap):
+                trace_stats["candidate_texts"] += 1
+                if line_bbox is None:
+                    continue
+                trace_stats["candidate_with_bbox"] += 1
+                rec_key = (str(txt), tuple(line_bbox))
+                if rec_key in rec_seen:
+                    continue
+                rec_seen.add(rec_key)
+                lx1, ly1, lx2, ly2 = line_bbox
+                col = 0 if ((lx1 + lx2) / 2) < (page_w * 0.5) else 1
+                records.append({"text": str(txt), "bbox": line_bbox, "col": col, "strict": bool(strict_pat.match(str(txt)) or weak_pat.match(str(txt)))})
+                if len(records) >= candidate_cap:
+                    break
+            if len(records) >= candidate_cap:
+                break
 
         ocr_candidate_sources: List[Any] = []
         ocr_candidate_sources.append(self._obj_get(pp_obj, "overall_ocr_res"))
@@ -1061,45 +1259,73 @@ class PDFCutterApp:
             if btype not in {"text", "title", "list", "paragraph"}:
                 continue
             lines = self._pick_list_by_keys(block, ["res", "words", "lines", "text_lines", "ocr", "ocr_result"])
-            candidate_nodes = [block] + lines
-            for line in candidate_nodes:
-                for txt, line_bbox in self._extract_text_bbox_candidates(line):
+            for line in [block] + lines:
+                for txt, line_bbox in self._extract_text_bbox_candidates(line, max_depth=4, cap=120):
+                    trace_stats["candidate_texts"] += 1
                     if line_bbox is None:
                         continue
-                    if len(trace_samples) < 20 and TRACE_MODE:
-                        trace_samples.append({"text": txt, "bbox": line_bbox})
-                    is_strict = bool(strict_pat.match(txt))
-                    is_weak = bool(weak_pat.match(txt))
-                    m = leading_num_pat.match(txt)
-                    if not (is_strict or is_weak):
-                        if m:
-                            is_weak = True
-                        else:
-                            continue
-                    qid = int(m.group(1)) if m else (int(txt) if txt else 0)
-                    if qid == 0 or qid > 9999:
+                    trace_stats["candidate_with_bbox"] += 1
+                    rec_key = (str(txt), tuple(line_bbox))
+                    if rec_key in rec_seen:
                         continue
-                    lx1, ly1, lx2, ly2 = line_bbox
-                    bw = max(0, lx2 - lx1)
-                    bh = max(0, ly2 - ly1)
-                    cx = (line_bbox[0] + line_bbox[2]) / 2
-                    col = 0 if cx < (page_w * 0.5) else 1
+                    rec_seen.add(rec_key)
+                    lx1, _, lx2, _ = line_bbox
+                    col = 0 if ((lx1 + lx2) / 2) < (page_w * 0.5) else 1
+                    records.append({"text": str(txt), "bbox": line_bbox, "col": col, "strict": bool(strict_pat.match(str(txt)) or weak_pat.match(str(txt)))})
+                    if len(records) >= candidate_cap:
+                        break
+                if len(records) >= candidate_cap:
+                    break
+            if len(records) >= candidate_cap:
+                break
 
-                    if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
-                        continue
-                    if col == 0 and lx1 > (0.35 * page_w):
-                        continue
-                    if col == 1 and lx1 < (0.50 * page_w):
-                        continue
+        regex_records: List[Dict[str, Any]] = []
+        strict_regex_count = 0
+        for rec in records:
+            qid = _parse_qid(rec["text"], allow_fallback=False)
+            if qid is None:
+                continue
+            trace_stats["regex_pass"] += 1
+            cand = {"id": qid, "bbox": rec["bbox"], "col": rec["col"], "strict": rec["strict"], "text": rec["text"]}
+            regex_records.append(cand)
+            if cand["strict"]:
+                strict_regex_count += 1
 
-                    cand = {"id": qid, "bbox": line_bbox, "col": col}
-                    if is_strict:
-                        anchors.append(cand)
-                    else:
-                        weak_anchor_candidates.append(cand)
+        if strict_regex_count == 0:
+            for rec in records:
+                if any((r["bbox"] == rec["bbox"] and r["text"] == rec["text"]) for r in regex_records):
+                    continue
+                qid = _parse_qid(rec["text"], allow_fallback=True)
+                if qid is None:
+                    continue
+                trace_stats["regex_pass"] += 1
+                regex_records.append({"id": qid, "bbox": rec["bbox"], "col": rec["col"], "strict": False, "text": rec["text"]})
 
-        if not anchors and weak_anchor_candidates:
-            anchors = weak_anchor_candidates
+        def _filter_by_stage(stage: str, source: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            filtered = [c for c in source if _pass_geom(c["bbox"], stage)]
+            trace_stats[f"pass{stage}"] = len(filtered)
+            if stage == "A" and TRACE_MODE:
+                for c in filtered[:trace_cap]:
+                    trace_samples.append({"text": c["text"], "bbox": c["bbox"], "id": c["id"]})
+            strict_only = [c for c in filtered if c["strict"]]
+            return strict_only if strict_only else filtered
+
+        anchors = _filter_by_stage("A", regex_records)
+        if not anchors:
+            anchors = _filter_by_stage("B", regex_records)
+        if not anchors:
+            anchors = _filter_by_stage("C", regex_records)
+
+        dedup_anchors: List[Dict[str, Any]] = []
+        seen_anchor = set()
+        for a in anchors:
+            ak = (a["id"], tuple(a["bbox"]), a["col"])
+            if ak in seen_anchor:
+                continue
+            seen_anchor.add(ak)
+            dedup_anchors.append({"id": a["id"], "bbox": a["bbox"], "col": a["col"]})
+        anchors = dedup_anchors
+        trace_stats["anchors"] = len(anchors)
 
         if DEBUG_MODE and not anchors and layout:
             sample = layout[0] if isinstance(layout[0], dict) else {"sample": str(layout[0])}
@@ -1116,6 +1342,8 @@ class PDFCutterApp:
                 "pp_json_sample": pp_json_sample,
                 "text_candidates": trace_samples,
                 "parse_errors": data.get("_parse_errors", []),
+                "trace_stats": trace_stats,
+                "pp_obj_keys": sorted(pp_obj.keys())[:50] if isinstance(pp_obj, dict) and not anchors else [],
             }
 
         anchors.sort(key=lambda a: (a["col"], a["bbox"][1], a["bbox"][0]))
