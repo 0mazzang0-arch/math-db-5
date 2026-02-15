@@ -1,31 +1,39 @@
-# PDF Cutter Experiment Runner Changes
+# PPStructureV3 Speed/Robustness Update
 
-## What changed and why
+## 핵심 변경점
 
-- `v3_isolation_runner.py` was finalized as the canonical runner file used by GUI.
-  - Added hardening for Windows console encoding (`backslashreplace`) to block cp949 print crashes.
-  - Enforced stdout JSON-only behavior with robust emit fallback that always outputs at least one JSON line, even on serialization errors.
-  - Expanded JSON converter safety for numpy types, tuple/set, bytes, and `Path`.
-  - Kept both CLI modes:
-    - Batch mode: `--pages_dir <dir>` emits JSONL (per-page lines with `page_file`).
-    - Single mode: `<image_path>` emits one JSON line with `ok` + `page_file`.
-  - Added `--warmup {0,1}` (default `1`) to perform one post-init dummy prediction.
-  - Added timing metadata fields (`t_init_ms`, `t_predict_ms`, `t_emit_ms`) in output payloads.
+- `v3_isolation_runner.py`
+  - `--profile {fast,full}` 추가 (기본 `fast`)
+    - `fast`는 layout+ocr 중심으로 무거운 모듈(table/formula/chart/region/orientation/unwarp/seal)을 기본 OFF.
+    - `full`은 기존 전체 모듈 ON.
+  - `--force_region_detection {-1,0,1}` 추가
+    - 기본 `-1`(profile 기본값 사용), `1`이면 region_detection 강제 ON.
+  - `fast`에서 `PP-StructureV3-fast.yaml`이 존재하면 우선 로드 시도, 실패 시 flag 기반 init으로 자동 폴백.
+  - predict 시에도 동일한 `use_xxx` 플래그 override를 재전달(버전별 init 플래그 무시 대비).
+  - 타이밍 메타 강화: `t_init_ms`, `t_predict_ms`, `t_page_total_ms`, `t_emit_ms`.
+  - stderr 요약 로그 추가: `P003 predict=xxxxms total=xxxxms`.
 
-- `pdf_cutter_experiment_gui.py` was made more tolerant to mixed/dirty stdout lines from subprocess runners.
-  - Subprocess decode path now uses `encoding="utf-8", errors="replace"`.
-  - Single/fallback runner parsers now scan stdout lines and accept the last valid JSON line, instead of failing immediately on malformed lines.
-  - Batch isolation loop continues on malformed lines (existing behavior maintained), with safer decode configuration.
+- `PP-StructureV3-fast.yaml`
+  - 빠른 실행용 미니 설정 템플릿 추가.
+  - 환경에 따라 YAML schema가 다를 수 있어, 러너는 YAML 실패 시 자동 폴백하도록 구성.
 
-- Backup file added:
-  - `v3_isolation_runner.py.bak`
+- `pdf_cutter_experiment_gui.py`
+  - 옵션에 `정밀모드(full)` 체크박스 추가 (기본 OFF=fast).
+  - 러너 배치 호출 시 `--profile` 전달.
+  - 시작 시 현재 profile을 환경변수(`PPSTRUCTURE_V3_PROFILE`)로 반영하여 단일 러너 호출도 동일 profile 사용.
+  - fast에서 `anchors=0`인 페이지는 해당 페이지만 자동 재시도:
+    - `--profile fast --force_region_detection 1 --warmup 0`
+    - 복구되면 진행, 실패하면 기존 에러 격리 로직 유지.
 
-## Example commands
+## 실행 예시
 
 ```bash
-# Batch (JSONL)
-python v3_isolation_runner.py --pages_dir C:/temp/pages --dpi 250 --warmup 1
+# fast batch (기본)
+python v3_isolation_runner.py --pages_dir C:/temp/pages --dpi 250 --profile fast --warmup 1
 
-# Single image (single JSON line)
-python v3_isolation_runner.py C:/temp/pages/P001.png --warmup 1
+# full batch
+python v3_isolation_runner.py --pages_dir C:/temp/pages --dpi 250 --profile full --warmup 1
+
+# single + region_detection 강제 ON (fallback 테스트용)
+python v3_isolation_runner.py C:/temp/pages/P003.png --profile fast --force_region_detection 1 --warmup 0
 ```
