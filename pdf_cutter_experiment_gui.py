@@ -1,7 +1,4 @@
-import base64
-import io
 import json
-import os
 import queue
 import re
 import threading
@@ -12,18 +9,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import fitz  # PyMuPDF
-import google.generativeai as genai
 from PIL import Image
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, ttk
-import requests
-
+try:
+    import cv2
+except Exception:
+    cv2 = None
 
 try:
-    from config import GOOGLE_API_KEYS
+    from paddleocr import PPStructure
+    PADDLE_OCR_AVAILABLE = True
 except Exception:
-    GOOGLE_API_KEYS = []
-
+    PPStructure = None
+    PADDLE_OCR_AVAILABLE = False
 
 APP_TITLE = "PDF Cutter Experiment GUI"
 DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parent / "pdf_cutter_output"
@@ -35,22 +34,7 @@ MIN_DPI = 200
 MAX_DPI = 300
 
 
-# [1/3] PROMPT 변수를 이걸로 덮어쓰세요
-# [1단계] PROMPT 변수 교체
-PROMPT = """
-You are a strict JSON emitter for detecting Korean math QUESTION items on a single PDF page image.
-Return JSON only with this exact schema:
-{"page_index": <int>, "items":[{"id":<int>,"kind":"MC"|"SA","bbox":[x1,y1,x2,y2]}, ...]}
-
-Hard rules:
-- Detect ONLY items that have a printed 4-digit question number (e.g., 0005, 0020, 0534). The id MUST equal that number as an integer ("0020"->20).
-- Each item must contain EXACTLY ONE such 4-digit number, and that number must be visible inside the bbox.
-- If the item contains multiple-choice markers like ①②③④⑤, set kind="MC". Otherwise set kind="SA".
-- The bbox must include the entire question content (stem + any figures/graphs/tables + choices if present).
-- DO NOT include theory/concept explanation boxes, definitions, summaries, headers/footers, page numbers, difficulty labels, or blank areas.
-- Never output partial strips (thin bands). If unsure, do not output an item.
-- JSON ONLY. No markdown, no code fences, no explanation.
-""".strip()
+DEBUG_MODE = True
 
 
 
@@ -61,67 +45,28 @@ class PageTask:
     page_png_path: Path
 
 
-class GeminiBBoxClient:
+class PaddleStructureClient:
     def __init__(self) -> None:
-        # 네가 쓰는 모델로 고정
-        self.model_name = "gemini-3-flash-preview"  # <-- 핵심 변경
-        key = GOOGLE_API_KEYS[0] if GOOGLE_API_KEYS else os.environ.get("GOOGLE_API_KEY", "")
-        self.api_key = key.strip()
-        self.enabled = bool(self.api_key)
+        self.enabled = bool(PADDLE_OCR_AVAILABLE and cv2 is not None)
+        self._engine: Optional[Any] = None
+        if self.enabled:
+            self._engine = PPStructure(show_log=False, ocr=True, layout=True, table=True)
 
-    def _endpoint(self) -> str:
-        # v1beta generateContent 엔드포인트
-        return f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
-
-    def detect(self, page_index: int, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        if not self.enabled:
-            return None, "Gemini API key is missing."
-
+    def detect(self, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        if not self.enabled or self._engine is None or cv2 is None:
+            return None, "PaddleOCR 설치 필요: pip install paddlepaddle paddleocr"
         try:
-            raw = image_path.read_bytes()
-            b64 = base64.b64encode(raw).decode("utf-8")
-
-            payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": PROMPT.replace("{page_index}", str(page_index))},
-                        {"inline_data": {"mime_type": "image/png", "data": b64}}
-                    ]
-                }],
-                # 가능하면 JSON 강제(지원 안 하면 무시될 수 있음)
-                "generationConfig": {
-                    "temperature": 0.0,
-                    "response_mime_type": "application/json"
-                }
-            }
-
-            res = requests.post(self._endpoint(), headers={"Content-Type": "application/json"}, json=payload, timeout=120)
-
-            if res.status_code != 200:
-                return None, f"{res.status_code} {res.text}"
-
-            data = res.json()
-
-            # 모델 응답 텍스트 추출(후보 0번)
-            text = ""
-            try:
-                text = data["candidates"][0]["content"]["parts"][0].get("text", "")
-            except Exception:
-                pass
-
-            if not text:
-                return None, f"Empty model output: {str(data)[:200]}"
-
-            # JSON만 오도록 시켰으니 파싱
-            try:
-                return json.loads(text), None
-            except Exception:
-                # 혹시 앞뒤로 잡문이 섞이면 JSON 블록만 뽑아 파싱 시도
-                m = re.search(r"\{.*\}", text, re.DOTALL)
-                if not m:
-                    return None, f"JSON parse failed: {text[:200]}"
-                return json.loads(m.group(0)), None
-
+            raw = cv2.imread(str(image_path))
+            if raw is None:
+                return None, "Page image load failed"
+            result = self._engine(raw)
+            if isinstance(result, dict):
+                layout = result.get("layout", result.get("res", []))
+            elif isinstance(result, list):
+                layout = result
+            else:
+                layout = []
+            return {"layout": layout}, None
         except Exception as e:
             return None, f"Exception: {e}"
 
@@ -262,6 +207,18 @@ class PDFCutterApp:
 
         self._build_ui()
         self._start_log_pump()
+        self._layout_keys_logged = False
+        self.paddle_client = PaddleStructureClient()
+        if not self.paddle_client.enabled:
+            self.log("PaddleOCR 설치 필요: pip install paddlepaddle paddleocr")
+            self.start_btn.configure(state=tk.DISABLED)
+
+    def _set_progress_safe(self, processed: int, total: int) -> None:
+        def _apply() -> None:
+            self.progress_label_var.set(f"진행률: {processed}/{total}")
+            self.progress_var.set((processed / max(1, total)) * 100.0)
+
+        self.root.after(0, _apply)
 
     def _build_ui(self) -> None:
         top = ttk.Frame(self.root, padding=12)
@@ -358,6 +315,9 @@ class PDFCutterApp:
         if not self.input_files:
             self.log("⚠️ PDF 파일/폴더를 먼저 선택하세요.")
             return
+        if not self.paddle_client.enabled:
+            self.log("PaddleOCR 설치 필요: pip install paddlepaddle paddleocr")
+            return
 
         self.stop_event.clear()
         self.start_btn.configure(state=tk.DISABLED)
@@ -389,8 +349,6 @@ class PDFCutterApp:
             total_pages_all = self._count_total_pages(self.input_files)
             processed_pages_all = 0
 
-            client = GeminiBBoxClient()
-
             for pdf_path in self.input_files:
                 if self.stop_event.is_set():
                     break
@@ -400,7 +358,7 @@ class PDFCutterApp:
                     output_root=output_root,
                     dpi=dpi,
                     workers=workers,
-                    gemini_client=client,
+                    paddle_client=self.paddle_client,
                     total_pages_all=total_pages_all,
                     processed_pages_before=processed_pages_all,
                 )
@@ -432,7 +390,7 @@ class PDFCutterApp:
         output_root: Path,
         dpi: int,
         workers: int,
-        gemini_client: GeminiBBoxClient,
+        paddle_client: PaddleStructureClient,
         total_pages_all: int,
         processed_pages_before: int,
     ) -> Tuple[int, int, int]:
@@ -458,7 +416,7 @@ class PDFCutterApp:
                 t = next(task_iter, None)
                 if not t:
                     break
-                fut = executor.submit(self._process_page, t, crops_dir, errors_dir, gemini_client, pdf_stem)
+                fut = executor.submit(self._process_page, t, crops_dir, errors_dir, paddle_client, pdf_stem)
                 pending[fut] = t
 
             while pending and not self.stop_event.is_set():
@@ -467,8 +425,7 @@ class PDFCutterApp:
                     task = pending.pop(fut)
                     done_pages += 1
                     processed = processed_pages_before + done_pages
-                    self.progress_label_var.set(f"진행률: {processed}/{total_pages_all}")
-                    self.progress_var.set((processed / max(1, total_pages_all)) * 100.0)
+                    self._set_progress_safe(processed, total_pages_all)
 
                     try:
                         saved_count, is_error = fut.result()
@@ -480,7 +437,7 @@ class PDFCutterApp:
 
                     nxt = next(task_iter, None)
                     if nxt and not self.stop_event.is_set():
-                        nf = executor.submit(self._process_page, nxt, crops_dir, errors_dir, gemini_client, pdf_stem)
+                        nf = executor.submit(self._process_page, nxt, crops_dir, errors_dir, paddle_client, pdf_stem)
                         pending[nf] = nxt
 
             if self.stop_event.is_set():
@@ -508,7 +465,7 @@ class PDFCutterApp:
         task: PageTask,
         crops_dir: Path,
         errors_dir: Path,
-        gemini_client: GeminiBBoxClient,
+        paddle_client: PaddleStructureClient,
         pdf_stem: str,
     ) -> Tuple[int, bool]:
         if self.stop_event.is_set():
@@ -518,36 +475,34 @@ class PDFCutterApp:
         w, h = img.size
 
         try:
-            data, raw = gemini_client.detect(page_index=task.page_number - 1, image_path=task.page_png_path)
+            data, raw = paddle_client.detect(image_path=task.page_png_path)
             if data is None:
                 self._write_page_error(errors_dir, task.page_number, task.page_png_path, raw or "parse failed")
-                self.log(f"❌ [Fail] P{task.page_number:03d} err={(raw or 'json parse fail')[:200]}")
+                self.log(f"❌ [Fail] P{task.page_number:03d} err={(raw or 'parse fail')[:200]}")
                 return 0, True
 
-            items = self._validate_and_normalize_items(data, w, h)
-            if items is None:
-                raw_text = raw if raw is not None else json.dumps(data, ensure_ascii=False)
-                self._write_page_error(errors_dir, task.page_number, task.page_png_path, raw_text)
-                self.log(f"❌ [Fail] P{task.page_number:03d} err=invalid fields or bbox")
+            anchors, objects = self._normalize_structure(data, w, h)
+            crops, dropped, errors = self._build_anchor_slice_regions(anchors, objects, w, h)
+            if errors > 0 and not crops:
+                self._write_page_error(errors_dir, task.page_number, task.page_png_path, "anchor overlap conflict")
+                self.log(f"🧾 [AnchorSlice] P{task.page_number:03d} anchors={len(anchors)} saved=0 dropped={dropped} errors={errors}")
                 return 0, True
-
-            crops, dropped = self._build_crop_regions(items, w, h, task.page_number)
 
             saved = 0
-# 반환값이 6개로 늘었으니 변수 하나 더 받습니다 (kind)
-            for seq, (qid, x1, y1, x2, y2, kind) in enumerate(crops, start=1):
+            for seq, (qid, x1, y1, x2, y2) in enumerate(crops, start=1):
                 if self.stop_event.is_set():
                     break
                 crop_img = img.crop((x1, y1, x2, y2))
-                # 파일명에 kind(MC/SA)를 포함시켜서 구분하기 쉽게 함
-                # 예: P003_Q001_N0020_MC.png
-                out_name = f"P{task.page_number:03d}_Q{seq:03d}_N{qid:03d}_{kind}.png"
+                out_name = f"P{task.page_number:03d}_Q{seq:03d}_N{qid:04d}.png"
                 crop_img.save(crops_dir / out_name)
                 saved += 1
 
+            if DEBUG_MODE:
+                self._save_debug_overlay(crops_dir, task.page_number, task.page_png_path, anchors, objects, crops)
+
             self.log(
-                f"🧾 [PDF Cut] pdf={pdf_stem} page={task.page_number}/{task.total_pages} "
-                f"items={len(items)} saved={saved} dropped={dropped}"
+                f"🧾 [AnchorSlice] P{task.page_number:03d} anchors={len(anchors)} "
+                f"saved={saved} dropped={dropped} errors={errors}"
             )
             return saved, False
         except Exception as e:
@@ -567,104 +522,222 @@ class PDFCutterApp:
         payload = {"page": page_num, "raw": raw_text, "timestamp": time.time()}
         json_dst.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-# [수정] 이 함수를 이걸로 통째로 교체하세요!
     @staticmethod
-    def _validate_and_normalize_items(data: Dict[str, Any], w: int, h: int) -> Optional[List[Dict[str, Any]]]:
-        if not isinstance(data, dict):
-            return None
-        items = data.get("items")
-        if not isinstance(items, list):
+    def _poly_to_bbox(poly: Any) -> Optional[List[int]]:
+        if not isinstance(poly, (list, tuple)):
             return None
 
-        norm: List[Dict[str, Any]] = []
-        for item in items:
-            if not isinstance(item, dict):
+        # Case A: flat [x1, y1, x2, y2]
+        if len(poly) == 4 and all(isinstance(v, (int, float)) for v in poly):
+            x1, y1, x2, y2 = [int(v) for v in poly]
+            lo_x, hi_x = min(x1, x2), max(x1, x2)
+            lo_y, hi_y = min(y1, y2), max(y1, y2)
+            if hi_x <= lo_x or hi_y <= lo_y:
+                return None
+            return [lo_x, lo_y, hi_x, hi_y]
+
+        # Case B: polygon [[x, y], ...]
+        if len(poly) < 4:
+            return None
+        try:
+            xs = [int(p[0]) for p in poly if isinstance(p, (list, tuple)) and len(p) >= 2]
+            ys = [int(p[1]) for p in poly if isinstance(p, (list, tuple)) and len(p) >= 2]
+        except Exception:
+            return None
+        if len(xs) < 2 or len(ys) < 2:
+            return None
+        x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return [x1, y1, x2, y2]
+
+    def _normalize_structure(self, data: Dict[str, Any], page_w: int, page_h: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        layout_raw = data.get("layout", []) if isinstance(data, dict) else []
+        if isinstance(layout_raw, dict):
+            layout = layout_raw.get("layout", layout_raw.get("res", []))
+        elif isinstance(layout_raw, list):
+            layout = layout_raw
+        else:
+            layout = []
+
+        if DEBUG_MODE and layout and not self._layout_keys_logged and isinstance(layout[0], dict):
+            self.log(f"🔎 [PPStructure] layout[0].keys={sorted(layout[0].keys())}")
+            self._layout_keys_logged = True
+
+        strict_pat = re.compile(r"^\s*\d{4}\s*$")
+        weak_pat = re.compile(r"^\s*0*\d{1,4}\s*$")
+        anchors: List[Dict[str, Any]] = []
+        objects: List[Dict[str, Any]] = []
+
+        for block in layout:
+            if not isinstance(block, dict):
                 continue
-            
-            # [Fix 1] "Q"만 찾는 옛날 규칙 삭제 -> MC/SA/Q 모두 허용
-            kind = item.get("kind", "Q")
-            
-            bbox = item.get("bbox")
-            if not isinstance(bbox, list) or len(bbox) != 4:
-                return None
-            try:
-                x1, y1, x2, y2 = [int(v) for v in bbox]
-                qid = int(item.get("id", 0))
-            except Exception:
-                return None
-            
-            # 좌표 유효성 검사
-            if x1 >= x2 or y1 >= y2:
-                return None
-            if x2 < 0 or y2 < 0 or x1 > w or y1 > h:
-                return None
-            
-            # 좌표 클램핑 (이미지 범위 안으로)
-            x1 = max(0, min(w - 1, x1))
-            y1 = max(0, min(h - 1, y1))
-            x2 = max(1, min(w, x2))
-            y2 = max(1, min(h, y2))
-            
-            # [Fix 2] kind 정보도 같이 포장해서 넘겨줌
-            norm.append({
-                "id": qid if qid >= 0 else 0, 
-                "bbox": [x1, y1, x2, y2],
-                "kind": kind 
-            })
+            btype = str(block.get("type", "text")).lower()
+            bx = self._poly_to_bbox(block.get("bbox"))
 
-        return norm
+            obj_type = "text"
+            if "figure" in btype or "image" in btype:
+                obj_type = "figure"
+            elif "table" in btype:
+                obj_type = "table"
+            if bx is not None:
+                objects.append({"type": obj_type, "bbox": bx})
 
-# [2단계] 이 함수 내부를 아래 코드로 완전히 교체하세요
-    def _build_crop_regions(self, items: List[Dict[str, Any]], w: int, h: int, page_num: int) -> Tuple[List[Tuple[int, int, int, int, int, str]], int]:
-        # 1. ID 및 Kind 정제
-        clean_items = []
-        for it in items:
-            try:
-                qid = int(it.get("id", 0))
-                if qid < 1 or qid > 9999: qid = 0
-            except: qid = 0
-            
-            bbox = [int(v) for v in it["bbox"]]
-            kind = it.get("kind", "Q")
-            clean_items.append({"id": qid, "bbox": bbox, "kind": kind})
+            if btype not in {"text", "title", "list", "paragraph"}:
+                continue
+            lines = block.get("res")
+            if not isinstance(lines, list):
+                continue
+            for line in lines:
+                txt = ""
+                line_bbox = None
+                if isinstance(line, dict):
+                    txt = str(line.get("text", "")).strip()
+                    line_bbox = self._poly_to_bbox(line.get("text_region"))
+                elif isinstance(line, (list, tuple)) and len(line) >= 2:
+                    line_bbox = self._poly_to_bbox(line[0])
+                    info = line[1]
+                    if isinstance(info, (list, tuple)) and info:
+                        txt = str(info[0]).strip()
+                if line_bbox is None:
+                    continue
+                if not (strict_pat.match(txt) or weak_pat.match(txt)):
+                    continue
+                qid = int(txt) if txt else 0
+                lx1, ly1, lx2, ly2 = line_bbox
+                bw = max(0, lx2 - lx1)
+                bh = max(0, ly2 - ly1)
+                cx = (line_bbox[0] + line_bbox[2]) / 2
+                col = 0 if cx < (page_w * 0.5) else 1
 
-        # 2. 중복 제거 (MC 정보 보존)
-        clean_items = dedup_items(clean_items)
+                if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
+                    continue
+                if col == 0 and lx1 > (0.35 * page_w):
+                    continue
+                if col == 1 and lx1 < (0.50 * page_w):
+                    continue
 
-        # 3. 조건부 겹침 컷오프
-        clean_items = apply_overlap_cut(clean_items, h)
+                anchors.append({"id": qid, "bbox": line_bbox, "col": col})
 
-        # 4. 패딩 및 확장 (그림 잘림 방지 로직 복구)
+        if DEBUG_MODE and not anchors and layout:
+            sample = layout[0] if isinstance(layout[0], dict) else {"sample": str(layout[0])}
+            self.log(f"⚠️ [PPStructure] anchors=0 sample={json.dumps(sample, ensure_ascii=False)[:400]}")
+
+        anchors.sort(key=lambda a: (a["col"], a["bbox"][1], a["bbox"][0]))
+        return anchors, objects
+
+    def _build_anchor_slice_regions(
+        self,
+        anchors: List[Dict[str, Any]],
+        objects: List[Dict[str, Any]],
+        w: int,
+        h: int,
+    ) -> Tuple[List[Tuple[int, int, int, int, int]], int, int]:
+        margin = max(10, int(0.01 * h))
         pad_x = max(30, int(0.015 * w))
         pad_y = max(30, int(0.015 * h))
-        
-        final_candidates = []
-        for it in clean_items:
+
+        by_col = {0: [], 1: []}
+        for a in anchors:
+            by_col[a["col"]].append(a)
+
+        candidates: List[Dict[str, Any]] = []
+        error_count = 0
+        for col in (0, 1):
+            col_anchors = sorted(by_col[col], key=lambda a: a["bbox"][1])
+            x1 = 0 if col == 0 else int(w * 0.5)
+            x2 = int(w * 0.5) if col == 0 else w
+            for i, anchor in enumerate(col_anchors):
+                y_top = anchor["bbox"][1]
+                if i + 1 < len(col_anchors):
+                    y_bottom = col_anchors[i + 1]["bbox"][1] - margin
+                else:
+                    y_bottom = h
+                if y_bottom <= y_top:
+                    error_count += 1
+                    continue
+                box = [x1, y_top, x2, y_bottom]
+
+                for obj in objects:
+                    if obj["type"] not in {"figure", "table"}:
+                        continue
+                    ox1, oy1, ox2, oy2 = obj["bbox"]
+                    cx = (ox1 + ox2) / 2
+                    cy = (oy1 + oy2) / 2
+                    if box[0] <= cx <= box[2] and box[1] <= cy <= box[3]:
+                        box = [min(box[0], ox1), min(box[1], oy1), max(box[2], ox2), max(box[3], oy2)]
+
+                if col == 0:
+                    box[2] = min(box[2], int(w * 0.60))
+                else:
+                    box[0] = max(box[0], int(w * 0.40))
+                if box[2] <= box[0]:
+                    error_count += 1
+                    continue
+
+                candidates.append({"id": anchor["id"], "bbox": box, "col": col})
+
+        candidates.sort(key=lambda it: (it["col"], it["bbox"][1]))
+
+        for col in (0, 1):
+            col_items = [c for c in candidates if c["col"] == col]
+            for i in range(len(col_items) - 1):
+                cur = col_items[i]["bbox"]
+                nxt = col_items[i + 1]["bbox"]
+                overlap = cur[3] - nxt[1]
+                if overlap <= 0:
+                    continue
+                if overlap <= int(0.15 * h):
+                    nxt[1] = cur[3] + margin
+                    if nxt[1] >= nxt[3]:
+                        return [], len(anchors), error_count + 1
+                else:
+                    return [], len(anchors), error_count + 1
+
+        out: List[Tuple[int, int, int, int, int]] = []
+        for it in candidates:
             x1, y1, x2, y2 = it["bbox"]
-            
-            # [GPT Fix] 아래 확장 로직: 짧은 문제는 더 많이, 긴 문제는 조금만 확장
-            extra_bottom = int(0.10 * h) if (y2 - y1) < int(0.18 * h) else int(0.06 * h)
-            
-            cx1 = max(0, x1 - pad_x)
-            cy1 = max(0, y1 - pad_y)
-            cx2 = min(w, x2 + pad_x)
-            # 여기가 핵심: 원래 y2에 pad_y와 extra_bottom을 더함
-            cy2 = min(h, y2 + pad_y + extra_bottom)
+            x1 = _clamp(x1 - pad_x, 0, w - 1)
+            y1 = _clamp(y1 - pad_y, 0, h - 1)
+            x2 = _clamp(x2 + pad_x, 1, w)
+            y2 = _clamp(y2 + pad_y, 1, h)
+            w_box = x2 - x1
+            h_box = y2 - y1
+            area = w_box * h_box
+            if w_box > (w * 0.70) and h_box < (h * 0.12):
+                continue
+            if h_box < max(120, int(0.10 * h)) or area < int(0.01 * w * h):
+                continue
+            out.append((max(0, min(9999, int(it["id"]))), x1, y1, x2, y2))
 
-            final_candidates.append({"id": it["id"], "bbox": [cx1, cy1, cx2, cy2], "kind": it["kind"]})
+        dropped = max(0, len(anchors) - len(out))
+        return out, dropped, error_count
 
-        # 5. 최종 쓰레기 제거
-        final_candidates = final_garbage_filter(final_candidates, w, h)
-
-        # 6. 결과 반환
-        out = []
-        for it in final_candidates:
-            x1, y1, x2, y2 = it["bbox"]
-            out.append((it["id"], x1, y1, x2, y2, it["kind"]))
-
-        dropped = len(items) - len(out)
-        return out, dropped
-
+    def _save_debug_overlay(
+        self,
+        crops_dir: Path,
+        page_num: int,
+        page_png: Path,
+        anchors: List[Dict[str, Any]],
+        objects: List[Dict[str, Any]],
+        crops: List[Tuple[int, int, int, int, int]],
+    ) -> None:
+        if cv2 is None:
+            return
+        canvas = cv2.imread(str(page_png))
+        if canvas is None:
+            return
+        for a in anchors:
+            x1, y1, x2, y2 = a["bbox"]
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        for obj in objects:
+            if obj["type"] not in {"figure", "table"}:
+                continue
+            x1, y1, x2, y2 = obj["bbox"]
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        for _, x1, y1, x2, y2 in crops:
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), (255, 0, 0), 2)
+        cv2.imwrite(str(crops_dir / f"debug_P{page_num:03d}.jpg"), canvas)
 
 
 def main() -> None:
