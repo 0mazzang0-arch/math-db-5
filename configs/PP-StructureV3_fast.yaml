@@ -1,0 +1,14 @@
+# Fast PP-StructureV3 config placeholder.
+# Recommended: copy from exported full YAML and keep existing keys only.
+pipeline_name: PP-StructureV3
+Global:
+  batch_size: 1
+  use_region_detection: true
+  use_table_recognition: false
+  use_formula_recognition: false
+  use_chart_recognition: false
+  use_seal_recognition: false
+  use_doc_preprocessor: false
+  use_doc_unwarping: false
+  use_doc_orientation_classify: false
+  use_textline_orientation: false
