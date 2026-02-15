@@ -26,6 +26,8 @@ os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
 
+GLOBAL_ISOLATION_MODE = os.environ.get("PPSTRUCTURE_V3_ISOLATION", "0").strip().lower() in {"1", "true", "yes", "on"}
+
 try:
     import cv2
 except Exception:
@@ -35,12 +37,16 @@ try:
 except Exception:
     np = None
 
-try:
-    from paddleocr import PPStructureV3
-    PADDLE_OCR_AVAILABLE = True
-except Exception:
+if not GLOBAL_ISOLATION_MODE:
+    try:
+        from paddleocr import PPStructureV3
+        PADDLE_OCR_AVAILABLE = True
+    except Exception:
+        PPStructureV3 = None
+        PADDLE_OCR_AVAILABLE = False
+else:
     PPStructureV3 = None
-    PADDLE_OCR_AVAILABLE = False
+    PADDLE_OCR_AVAILABLE = True
 
 APP_TITLE = "PDF Cutter Experiment GUI"
 DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parent / "pdf_cutter_output"
@@ -68,24 +74,28 @@ class PageTask:
 
 
 class PaddleStructureClient:
-    ISOLATION_MODE = os.environ.get("PPSTRUCTURE_V3_ISOLATION", "0").strip().lower() in {"1", "true", "yes", "on"}
+    ISOLATION_MODE = GLOBAL_ISOLATION_MODE
 
     def __init__(self) -> None:
-        self.enabled = bool(PADDLE_OCR_AVAILABLE and cv2 is not None and np is not None)
+        self.enabled = bool((self.ISOLATION_MODE or PADDLE_OCR_AVAILABLE) and cv2 is not None and np is not None)
         self._engine: Optional[Any] = None
         self.paddleocr_version = "unknown"
         self.paddle_version = "unknown"
         self.init_error: Optional[str] = None
-        try:
-            import paddleocr as _pocr  # type: ignore
-            self.paddleocr_version = getattr(_pocr, "__version__", "unknown")
-        except Exception:
-            pass
-        try:
-            import paddle  # type: ignore
-            self.paddle_version = getattr(paddle, "__version__", "unknown")
-        except Exception:
-            pass
+        if not self.ISOLATION_MODE:
+            try:
+                import paddleocr as _pocr  # type: ignore
+                self.paddleocr_version = getattr(_pocr, "__version__", "unknown")
+            except Exception:
+                pass
+            try:
+                import paddle  # type: ignore
+                self.paddle_version = getattr(paddle, "__version__", "unknown")
+            except Exception:
+                pass
+        else:
+            self.paddleocr_version = "isolation-subprocess"
+            self.paddle_version = "isolation-subprocess"
 
     def _ensure_engine(self) -> Tuple[bool, Optional[str]]:
         if not self.enabled:
@@ -178,12 +188,12 @@ class PaddleStructureClient:
                 [sys.executable, str(runner_path), str(image_path)],
                 capture_output=True,
                 text=True,
-                timeout=240,
+                timeout=900,
                 check=False,
             )
             out = (proc.stdout or "").strip()
             if not out:
-                stderr_tail = (proc.stderr or "").strip()[-500:]
+                stderr_tail = (proc.stderr or "").strip()[-2000:]
                 return None, f"stage=isolation_runner err=empty stdout stderr={stderr_tail}"
             payload = json.loads(out)
             if not isinstance(payload, dict):
@@ -194,7 +204,11 @@ class PaddleStructureClient:
                     "pp_obj": payload.get("pp_obj", {}),
                     "pp_meta": {"mode": "isolation_subprocess", "fallback": "v3_isolation_runner"},
                 }, None
-            return None, f"stage={payload.get('stage','isolation_runner')} err={payload.get('err','unknown')}"
+            stderr_tail = (proc.stderr or "").strip()[-2000:]
+            return None, f"stage={payload.get('stage','isolation_runner')} err={payload.get('err','unknown')} stderr_tail={stderr_tail}"
+        except subprocess.TimeoutExpired as e:
+            stderr_tail = ((e.stderr or "") if isinstance(e.stderr, str) else str(e.stderr or "")).strip()[-2000:]
+            return None, f"stage=isolation_runner_timeout err=timeout stderr_tail={stderr_tail}"
         except Exception as e:
             return None, f"stage=isolation_runner err={e}"
 
@@ -422,6 +436,7 @@ class PDFCutterApp:
         self.input_files: List[Path] = []
         self.stop_event = threading.Event()
         self.worker_thread: Optional[threading.Thread] = None
+        self.warmup_thread: Optional[threading.Thread] = None
         self.log_queue: "queue.Queue[str]" = queue.Queue()
 
         self.output_root_var = tk.StringVar(value=str(DEFAULT_OUTPUT_ROOT))
@@ -486,6 +501,8 @@ class PDFCutterApp:
         self.start_btn.pack(side=tk.LEFT, padx=4)
         self.stop_btn = ttk.Button(ctl_frame, text="Stop", command=self.stop, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=4)
+        self.warmup_btn = ttk.Button(ctl_frame, text="V3 모델 캐시 워밍업", command=self.warmup_v3_cache)
+        self.warmup_btn.pack(side=tk.LEFT, padx=4)
 
         ttk.Label(ctl_frame, textvariable=self.progress_label_var).pack(side=tk.LEFT, padx=16)
 
@@ -559,6 +576,51 @@ class PDFCutterApp:
         self.worker_thread = threading.Thread(target=self._run_pipeline, daemon=True)
         self.worker_thread.start()
 
+    def warmup_v3_cache(self) -> None:
+        if self.warmup_thread and self.warmup_thread.is_alive():
+            self.log("⚠️ V3 워밍업이 이미 실행 중입니다.")
+            return
+        self.warmup_btn.configure(state=tk.DISABLED)
+        self.warmup_thread = threading.Thread(target=self._run_warmup_subprocess, daemon=True)
+        self.warmup_thread.start()
+
+    def _run_warmup_subprocess(self) -> None:
+        cmd = [
+            sys.executable,
+            "-c",
+            "from paddleocr import PPStructureV3; print('warmup'); PPStructureV3(); print('ok')",
+        ]
+        self.log(f"ℹ️ [Warmup] start cmd={' '.join(cmd[:2])} ...")
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+
+            def _pump(stream, prefix: str) -> None:
+                if stream is None:
+                    return
+                for line in stream:
+                    self.log(f"{prefix} {line.rstrip()}")
+
+            t_out = threading.Thread(target=_pump, args=(proc.stdout, "[Warmup][stdout]"), daemon=True)
+            t_err = threading.Thread(target=_pump, args=(proc.stderr, "[Warmup][stderr]"), daemon=True)
+            t_out.start()
+            t_err.start()
+            try:
+                rc = proc.wait(timeout=900)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                self.log("❌ [Warmup] timeout(900s)")
+                rc = -1
+            t_out.join(timeout=2)
+            t_err.join(timeout=2)
+            if rc == 0:
+                self.log("✅ [Warmup] 완료")
+            else:
+                self.log(f"❌ [Warmup] 실패 rc={rc}")
+        except Exception as e:
+            self.log(f"❌ [Warmup] stage=run err={e}")
+        finally:
+            self.root.after(0, lambda: self.warmup_btn.configure(state=tk.NORMAL))
+
     def stop(self) -> None:
         self.stop_event.set()
         self.log("🛑 Stop 요청 수신: 현재 작업 이후 즉시 중단합니다.")
@@ -571,6 +633,13 @@ class PDFCutterApp:
         try:
             output_root = Path(self.output_root_var.get())
             workers = max(MIN_WORKERS, min(MAX_WORKERS, int(self.workers_var.get())))
+            if self.paddle_client.ISOLATION_MODE and workers != 1:
+                self.log("⚠ Isolation mode: workers forced to 1")
+                workers = 1
+                self.root.after(0, lambda: self.workers_var.set(1))
+            elif self.paddle_client.ISOLATION_MODE:
+                self.log("⚠ Isolation mode: workers forced to 1")
+                workers = 1
             dpi = max(MIN_DPI, min(MAX_DPI, int(self.dpi_var.get())))
 
             (output_root / "out_pages").mkdir(parents=True, exist_ok=True)
@@ -711,12 +780,17 @@ class PDFCutterApp:
                 stage = "detect"
                 if raw and "stage=" in raw:
                     stage = raw.split("stage=", 1)[1].split()[0]
+                extras = None
+                if raw and "stderr_tail=" in raw:
+                    stderr_tail = raw.split("stderr_tail=", 1)[1][:2000]
+                    extras = {"stderr_tail": stderr_tail}
                 self._write_page_error(
                     errors_dir,
                     task.page_number,
                     task.page_png_path,
                     raw or "parse failed",
                     stage=stage,
+                    extras=extras,
                 )
                 self.log(f"❌ [Fail] P{task.page_number:03d} stage={stage} err={(raw or 'parse fail')}")
                 if stage == "paddle_runtime_unimplemented":
