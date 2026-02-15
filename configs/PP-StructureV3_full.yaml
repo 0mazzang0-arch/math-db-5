@@ -1,0 +1,14 @@
+# Baseline PP-StructureV3 config placeholder.
+# Recommended: regenerate with `python scripts/export_ppv3_yaml.py` on a machine with paddleocr installed.
+pipeline_name: PP-StructureV3
+Global:
+  batch_size: 1
+  use_region_detection: true
+  use_table_recognition: true
+  use_formula_recognition: true
+  use_chart_recognition: true
+  use_seal_recognition: true
+  use_doc_preprocessor: true
+  use_doc_unwarping: true
+  use_doc_orientation_classify: true
+  use_textline_orientation: true

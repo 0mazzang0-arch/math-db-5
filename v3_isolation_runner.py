@@ -1,14 +1,28 @@
 import argparse
+import ast
+import base64
 import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Tuple
 
-# ---------------------------------------------------------------------
-# Windows + PaddleOCR(PPStructureV3) 안정화용 환경 변수 (요구사항 고정)
-# ---------------------------------------------------------------------
+_LAST_EMIT_MS = 0.0
+ROOT = Path(__file__).resolve().parent
+CONFIG_DIR = ROOT / "configs"
+_ANCHOR_RE = re.compile(r"^\s*([A-C])\s*([0-9]{1,3})?\s*$")
+_FAST_DISABLE_KEYS = {
+    "use_table_recognition",
+    "use_formula_recognition",
+    "use_chart_recognition",
+    "use_seal_recognition",
+    "use_doc_unwarping",
+    "use_doc_orientation_classify",
+    "use_textline_orientation",
+}
+
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["FLAGS_use_mkldnn"] = "0"
 os.environ["FLAGS_use_onednn"] = "0"
@@ -16,13 +30,6 @@ os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
 
-# ---------------------------------------------------------------------
-# IMPORTANT (Windows cp949/mbcs):
-# - PPStructureV3 결과/로그에 cp949가 못 찍는 유니코드(한자/특수기호 등)가 섞이면
-#   stdout print 단계에서 UnicodeEncodeError가 발생할 수 있음.
-# - stdout/stderr의 encoding은 건드리지 않고, "encoding error handler"만 바꿔서
-#   출력이 절대 죽지 않게 한다. (unencodable char -> \uXXXX 형태로 escape)
-# ---------------------------------------------------------------------
 try:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")  # type: ignore[attr-defined]
@@ -33,17 +40,10 @@ except Exception:
 
 
 def _stage(msg: str) -> None:
-    # stderr로만 진행 로그(텍스트) 출력
     print(f"[stage] {msg}", file=sys.stderr, flush=True)
 
 
-def _default(obj: Any) -> Any:
-    """
-    json.dumps에서 ndarray/np scalar 등이 나오면 터지는 문제 방지.
-    - ndarray -> list
-    - np.int/np.float -> int/float
-    - Path -> str
-    """
+def _converter(obj: Any) -> Any:
     try:
         import numpy as np
 
@@ -55,19 +55,49 @@ def _default(obj: Any) -> Any:
             return float(obj)
     except Exception:
         pass
+    if isinstance(obj, (tuple, set)):
+        return list(obj)
+    if isinstance(obj, bytes):
+        try:
+            return {"__bytes_b64__": base64.b64encode(obj).decode("ascii")}
+        except Exception:
+            return repr(obj)
     if isinstance(obj, Path):
         return str(obj)
-    return str(obj)
+    return repr(obj)
 
 
-def _emit_line(payload: Dict[str, Any]) -> None:
-    # JSONL: 1 page == 1 line
-    print(json.dumps(payload, ensure_ascii=False, default=_default), flush=True)
+def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "") -> float:
+    global _LAST_EMIT_MS
+    emit_start = time.perf_counter()
+    try:
+        payload.setdefault("page_file", fallback_page_file)
+        payload.setdefault("t_emit_ms", round(_LAST_EMIT_MS, 3))
+        print(json.dumps(payload, ensure_ascii=True, default=_converter), flush=True)
+    except Exception as e:
+        err_payload = {
+            "ok": False,
+            "stage": "emit",
+            "err": str(e),
+            "page_file": payload.get("page_file", fallback_page_file),
+        }
+        try:
+            print(json.dumps(err_payload, ensure_ascii=True), flush=True)
+        except Exception:
+            sys.stdout.write('{"ok": false, "stage": "emit", "err": "emit failed", "page_file": "__BATCH__"}\n')
+            sys.stdout.flush()
+    _LAST_EMIT_MS = (time.perf_counter() - emit_start) * 1000.0
+    return _LAST_EMIT_MS
 
 
-def _emit_obj(payload: Dict[str, Any]) -> None:
-    # 단일 이미지 모드: 1 JSON object 출력
-    print(json.dumps(payload, ensure_ascii=False, default=_default), flush=True)
+def _sorted_page_files(pages_dir: Path) -> List[Path]:
+    files = [p for p in pages_dir.glob("P*.png") if p.is_file()]
+
+    def _key(p: Path) -> Tuple[int, int, str]:
+        m = re.match(r"^P(\d+)\.png$", p.name)
+        return (0, int(m.group(1)), p.name) if m else (1, 0, p.name)
+
+    return sorted(files, key=_key)
 
 
 def _first_output(output: Any) -> Any:
@@ -108,15 +138,9 @@ def _extract_json(first: Any) -> Any:
 
 def _extract_first_object_fields(first: Any) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
-    keys = ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]
-    if isinstance(first, dict):
-        for key in keys:
-            if key in first:
-                fields[key] = first.get(key)
-        return fields
-    for key in keys:
+    for key in ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]:
         try:
-            value = getattr(first, key, None)
+            value = first.get(key) if isinstance(first, dict) else getattr(first, key, None)
         except Exception:
             value = None
         if value is not None:
@@ -124,153 +148,390 @@ def _extract_first_object_fields(first: Any) -> Dict[str, Any]:
     return fields
 
 
-def _sorted_page_files(pages_dir: Path) -> List[Path]:
-    files = [p for p in pages_dir.glob("P*.png") if p.is_file()]
+def _sanitize_pp_json(pp_json: Any) -> Dict[str, Any]:
+    if not isinstance(pp_json, dict):
+        return {}
+    result = dict(pp_json)
+    res_val = result.get("res")
+    if isinstance(res_val, str):
+        parsed = None
+        try:
+            parsed = json.loads(res_val)
+        except Exception:
+            try:
+                parsed = ast.literal_eval(res_val)
+            except Exception:
+                parsed = None
+        if isinstance(parsed, (dict, list)):
+            result["res"] = parsed
+        else:
+            return {}
+    return result
 
-    def _key(p: Path) -> Any:
-        m = re.match(r"^P(\d+)\.png$", p.name)
-        if m:
-            return (0, int(m.group(1)), p.name)
-        return (1, 0, p.name)
 
-    return sorted(files, key=_key)
+def _iter_dicts(obj: Any):
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from _iter_dicts(v)
+    elif isinstance(obj, list):
+        for it in obj:
+            yield from _iter_dicts(it)
 
 
-def _predict_one(engine: Any, page_path: Path) -> Dict[str, Any]:
+def _extract_bbox(node: Dict[str, Any]) -> List[int]:
+    cand = node.get("bbox") or node.get("box") or node.get("rect")
+    if isinstance(cand, (list, tuple)) and len(cand) == 4:
+        return [int(float(cand[0])), int(float(cand[1])), int(float(cand[2])), int(float(cand[3]))]
+    poly = node.get("poly") or node.get("polygon") or node.get("points")
+    if isinstance(poly, (list, tuple)) and len(poly) >= 4:
+        pts = []
+        for p in poly:
+            if isinstance(p, (list, tuple)) and len(p) >= 2:
+                try:
+                    pts.append((float(p[0]), float(p[1])))
+                except Exception:
+                    pass
+        if pts:
+            xs = [x for x, _ in pts]
+            ys = [y for _, y in pts]
+            return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+    return []
+
+
+def _extract_text(node: Dict[str, Any]) -> str:
+    for k in ("text", "transcription", "label", "cls", "type", "content"):
+        v = node.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    anchors: List[Dict[str, Any]] = []
+    objects: List[Dict[str, Any]] = []
+    seen_anchor = set()
+    seen_obj = set()
+
+    for src in (pp_obj, pp_json):
+        for node in _iter_dicts(src):
+            bbox = _extract_bbox(node)
+            if not bbox:
+                continue
+            text = _extract_text(node)
+            m = _ANCHOR_RE.match(text.upper()) if text else None
+            if m:
+                key = tuple(bbox)
+                if key not in seen_anchor:
+                    seen_anchor.add(key)
+                    anchors.append({"id": text, "bbox": bbox, "col": 0})
+            low = (text or "").lower()
+            obj_type = ""
+            if any(t in low for t in ["figure", "fig", "image", "photo"]):
+                obj_type = "figure"
+            elif any(t in low for t in ["table", "tbl"]):
+                obj_type = "table"
+            elif node.get("type") in ("figure", "table"):
+                obj_type = str(node.get("type"))
+            if obj_type:
+                key = (obj_type, *bbox)
+                if key not in seen_obj:
+                    seen_obj.add(key)
+                    objects.append({"type": obj_type, "bbox": bbox})
+
+    anchors.sort(key=lambda a: (a.get("bbox", [0, 0, 0, 0])[1], a.get("bbox", [0, 0, 0, 0])[0]))
+    return anchors, objects
+
+
+def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
+    if profile == "full":
+        flags: Dict[str, Any] = {}
+    else:
+        flags = {
+            "use_table_recognition": False,
+            "use_formula_recognition": False,
+            "use_chart_recognition": False,
+            "use_region_detection": True,
+        }
+    if force_region_detection in (0, 1):
+        flags["use_region_detection"] = bool(force_region_detection)
+    return flags
+
+
+def _predict_with_fallback(engine: Any, inp: Any, predict_kwargs: Dict[str, Any]) -> Any:
+    if not predict_kwargs:
+        return engine.predict(input=inp)
+    try:
+        return engine.predict(input=inp, **predict_kwargs)
+    except TypeError:
+        return engine.predict(input=inp)
+    except Exception as e:
+        msg = str(e)
+        if "Unknown argument" in msg or "unexpected keyword" in msg:
+            return engine.predict(input=inp)
+        raise
+
+
+def _export_full_yaml_if_missing(full_yaml: Path) -> None:
+    if full_yaml.exists():
+        return
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        from paddleocr import PPStructureV3
+
+        PPStructureV3().export_paddlex_config_to_yaml(str(full_yaml))
+        _stage(f"exported_full_yaml {full_yaml.name}")
+    except Exception as e:
+        _stage(f"export_full_yaml_skip err={e}")
+
+
+def _replace_bool_line(line: str, key: str, value: bool) -> str:
+    m = re.match(rf"^(\s*){re.escape(key)}\s*:\s*(true|false|True|False)(\s*(#.*)?)$", line)
+    if not m:
+        return line
+    return f"{m.group(1)}{key}: {'true' if value else 'false'}{m.group(3) or ''}"
+
+
+def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> None:
+    if not full_yaml.exists():
+        return
+    try:
+        lines = full_yaml.read_text(encoding="utf-8", errors="replace").splitlines()
+        out = []
+        for line in lines:
+            updated = line
+            for key in _FAST_DISABLE_KEYS:
+                updated = _replace_bool_line(updated, key, False)
+            updated = _replace_bool_line(updated, "use_region_detection", True)
+            # doc_preprocessor는 끄지 않는다
+            updated = _replace_bool_line(updated, "use_doc_preprocessor", True)
+            if re.match(r"^\s*batch_size\s*:\s*\d+\s*(#.*)?$", updated):
+                lead = re.match(r"^(\s*)", updated).group(1)  # type: ignore[union-attr]
+                updated = f"{lead}batch_size: 1"
+            out.append(updated)
+        fast_yaml.write_text("\n".join(out) + "\n", encoding="utf-8")
+        _stage(f"generated_fast_yaml {fast_yaml.name}")
+    except Exception as e:
+        _stage(f"make_fast_yaml_skip err={e}")
+
+
+def _load_engine(profile: str) -> Any:
+    from paddleocr import PPStructureV3
+
+    full_cfg = CONFIG_DIR / "PP-StructureV3_full.yaml"
+    fast_cfg = CONFIG_DIR / "PP-StructureV3_fast.yaml"
+
+    if profile == "fast" and not fast_cfg.exists():
+        _export_full_yaml_if_missing(full_cfg)
+        _make_fast_yaml_from_full(full_cfg, fast_cfg)
+    elif profile == "full" and not full_cfg.exists():
+        _export_full_yaml_if_missing(full_cfg)
+
+    if profile == "fast":
+        if fast_cfg.exists():
+            return PPStructureV3(paddlex_config=str(fast_cfg))
+    if profile == "full":
+        if full_cfg.exists():
+            return PPStructureV3(paddlex_config=str(full_cfg))
+    return PPStructureV3()
+
+
+def _warmup_once(engine: Any, enabled: bool, profile: str, force_region_detection: int) -> None:
+    if not enabled:
+        return
+    try:
+        import numpy as np
+
+        dummy = np.full((64, 64, 3), 255, dtype=np.uint8)
+        _stage("warmup_start")
+        _predict_with_fallback(engine, dummy, _predict_flags(profile, force_region_detection))
+        _stage("warmup_done")
+    except Exception as e:
+        _stage(f"warmup_skip err={e}")
+
+
+def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, force_region_detection: int, payload_mode: str) -> Dict[str, Any]:
     page_name = page_path.name
+    page_start = time.perf_counter()
     try:
         import cv2
         import numpy as np
 
         raw = cv2.imdecode(np.fromfile(str(page_path), dtype=np.uint8), cv2.IMREAD_COLOR)
         if raw is None:
-            return {"ok": False, "page_file": page_name, "stage": "detect_load", "err": "imdecode failed"}
+            t_page_ms = (time.perf_counter() - page_start) * 1000.0
+            return {
+                "ok": False,
+                "page_file": page_name,
+                "stage": "detect_load",
+                "err": "imdecode failed",
+                "t_init_ms": round(t_init_ms, 3),
+                "t_predict_ms": round(t_page_ms, 3),
+                "t_page_ms": round(t_page_ms, 3),
+            }
 
+        predict_start = time.perf_counter()
+        flags = _predict_flags(profile, force_region_detection)
         try:
-            output = engine.predict(input=raw)
+            output = _predict_with_fallback(engine, raw, flags)
         except Exception:
-            # 일부 환경에서 input=str(path)가 더 안정적인 케이스가 있어 fallback
-            try:
-                output = engine.predict(input=str(page_path))
-            except Exception as e:
-                return {"ok": False, "page_file": page_name, "stage": "detect_predict", "err": str(e)}
+            output = _predict_with_fallback(engine, str(page_path), flags)
 
         first = _first_output(output)
-        pp_json = _extract_json(first)
+        pp_json = _sanitize_pp_json(_extract_json(first))
+        t_predict_ms = (time.perf_counter() - predict_start) * 1000.0
+        t_page_ms = (time.perf_counter() - page_start) * 1000.0
         if not isinstance(pp_json, dict):
             return {
                 "ok": False,
                 "page_file": page_name,
                 "stage": "parse_json",
                 "err": "invalid json payload",
-                "first_type": type(first).__name__ if first is not None else "None",
+                "t_init_ms": round(t_init_ms, 3),
+                "t_predict_ms": round(t_predict_ms, 3),
+                "t_page_ms": round(t_page_ms, 3),
             }
 
         pp_obj = _extract_first_object_fields(first)
-        pp_meta = {
-            "runner_mode": "single_or_pages_dir_batch",
+        anchors, objects = _extract_min_entities(pp_json, pp_obj)
+        base_payload = {
+            "ok": True,
             "page_file": page_name,
-            "first_type": type(first).__name__ if first is not None else "None",
-            "json_keys": sorted(pp_json.keys()),
+            "anchors": anchors,
+            "objects": objects,
+            "pp_meta": {
+                "profile": profile,
+                "predict_flags": flags,
+                "t_init_ms": round(t_init_ms, 3),
+                "t_predict_ms": round(t_predict_ms, 3),
+                "payload_mode": payload_mode,
+            },
+            "t_init_ms": round(t_init_ms, 3),
+            "t_predict_ms": round(t_predict_ms, 3),
+            "t_page_ms": round(t_page_ms, 3),
         }
-        return {"ok": True, "page_file": page_name, "pp_json": pp_json, "pp_obj": pp_obj, "pp_meta": pp_meta}
+        if payload_mode == "full":
+            base_payload["pp_json"] = pp_json
+            base_payload["pp_obj"] = pp_obj
+        return base_payload
     except Exception as e:
-        return {"ok": False, "page_file": page_name, "stage": "runner_loop", "err": str(e)}
+        t_page_ms = (time.perf_counter() - page_start) * 1000.0
+        return {
+            "ok": False,
+            "page_file": page_name,
+            "stage": "runner_loop",
+            "err": str(e),
+            "t_init_ms": round(t_init_ms, 3),
+            "t_predict_ms": round(t_page_ms, 3),
+            "t_page_ms": round(t_page_ms, 3),
+        }
 
 
-def run_pages_dir(pages_dir: Path) -> None:
+def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_detection: int, payload_mode: str) -> int:
     if not pages_dir.exists() or not pages_dir.is_dir():
-        _emit_line({"ok": False, "page_file": "", "stage": "args", "err": f"invalid pages_dir: {pages_dir}"})
-        return
-
-    try:
-        from paddleocr import PPStructureV3
-    except Exception as e:
-        _emit_line({"ok": False, "page_file": "", "stage": "imports", "err": str(e)})
-        return
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": f"invalid pages_dir: {pages_dir}"})
+        return 1
 
     page_files = _sorted_page_files(pages_dir)
-    _stage(f"start pages={len(page_files)}")
+    _stage(f"start pages={len(page_files)} profile={profile}")
     if not page_files:
-        _emit_line({"ok": False, "page_file": "", "stage": "load_pages", "err": "no P*.png files"})
-        return
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "load_pages", "err": "no P*.png files"})
+        return 1
 
+    init_start = time.perf_counter()
     try:
-        engine = PPStructureV3()
-        _stage("init_ok")
+        engine = _load_engine(profile)
+        t_init_ms = (time.perf_counter() - init_start) * 1000.0
+        _stage(f"init_ok t_init_ms={t_init_ms:.1f}")
     except Exception as e:
-        _emit_line({"ok": False, "page_file": "", "stage": "init_engine", "err": str(e)})
-        return
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "init_engine", "err": str(e), "profile": profile})
+        return 1
+
+    _warmup_once(engine, warmup, profile, force_region_detection)
 
     for page_path in page_files:
-        page_name = page_path.name
-        _stage(f"predict_start {page_name}")
-        payload = _predict_one(engine, page_path)
-        # JSONL 출력은 절대 죽으면 안됨
-        _emit_line(payload)
-        _stage(f"predict_done {page_name}")
-
-    _stage("done")
-
-
-def run_single_image(image_path: Path) -> None:
-    """
-    (호환성) 단일 이미지 입력 모드.
-    GUI의 PaddleStructureClient._run_isolation_runner()가 이 모드를 기대한다.
-    stdout에는 1개의 JSON object만 출력한다.
-    """
-    if not image_path.exists() or not image_path.is_file():
-        _emit_obj({"ok": False, "stage": "args", "err": f"invalid image_path: {image_path}"})
-        return
-
-    try:
-        from paddleocr import PPStructureV3
-    except Exception as e:
-        _emit_obj({"ok": False, "stage": "imports", "err": str(e)})
-        return
-
-    try:
-        engine = PPStructureV3()
-        _stage("init_ok(single)")
-    except Exception as e:
-        _emit_obj({"ok": False, "stage": "init_engine", "err": str(e)})
-        return
-
-    # 단일 이미지라도 payload는 batch와 동일한 스키마로 만들되,
-    # PaddleStructureClient는 pp_json만 필수로 보므로 ok/pp_json/pp_obj/pp_meta를 포함한다.
-    _stage(f"predict_start(single) {image_path.name}")
-    payload = _predict_one(engine, image_path)
-    if payload.get("ok"):
-        _emit_obj(
-            {
-                "ok": True,
-                "pp_json": payload.get("pp_json", {}),
-                "pp_obj": payload.get("pp_obj", {}),
-                "pp_meta": payload.get("pp_meta", {}),
-            }
+        payload = _predict_one(
+            engine,
+            page_path,
+            t_init_ms=t_init_ms,
+            profile=profile,
+            force_region_detection=force_region_detection,
+            payload_mode=payload_mode,
         )
-    else:
-        _emit_obj({"ok": False, "stage": payload.get("stage", "predict"), "err": payload.get("err", "unknown")})
-    _stage(f"predict_done(single) {image_path.name}")
+        payload.setdefault("profile", profile)
+        t_emit_ms = _emit_json(payload, fallback_page_file=page_path.name)
+        _stage(
+            f"predict_done {page_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
+            f"t_predict_ms={float(payload.get('t_predict_ms', 0.0)):.1f} t_emit_ms={t_emit_ms:.1f} "
+            f"t_page_ms={float(payload.get('t_page_ms', 0.0)):.1f}"
+        )
+
+    return 0
 
 
-def main() -> None:
+def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_detection: int, payload_mode: str) -> int:
+    if not image_path.exists() or not image_path.is_file():
+        _emit_json({"ok": False, "page_file": image_path.name, "stage": "args", "err": f"invalid image_path: {image_path}"})
+        return 1
+
+    init_start = time.perf_counter()
+    try:
+        engine = _load_engine(profile)
+        t_init_ms = (time.perf_counter() - init_start) * 1000.0
+        _stage(f"init_ok(single) t_init_ms={t_init_ms:.1f}")
+    except Exception as e:
+        _emit_json({"ok": False, "page_file": image_path.name, "stage": "init_engine", "err": str(e), "profile": profile})
+        return 1
+
+    _warmup_once(engine, warmup, profile, force_region_detection)
+    payload = _predict_one(
+        engine,
+        image_path,
+        t_init_ms=t_init_ms,
+        profile=profile,
+        force_region_detection=force_region_detection,
+        payload_mode=payload_mode,
+    )
+    t_emit_ms = _emit_json(payload, fallback_page_file=image_path.name)
+    _stage(
+        f"predict_done {image_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
+        f"t_predict_ms={float(payload.get('t_predict_ms', 0.0)):.1f} t_emit_ms={t_emit_ms:.1f} "
+        f"t_page_ms={float(payload.get('t_page_ms', 0.0)):.1f}"
+    )
+    return 0
+
+
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("image_path", nargs="?", help="single image path (e.g., P001.png)")
     parser.add_argument("--pages_dir", required=False, help="directory containing P*.png files (batch mode)")
-    parser.add_argument("--dpi", type=int, default=250, help="reserved (compat); not used by this runner")
+    parser.add_argument("--dpi", type=int, default=250, help="reserved")
+    parser.add_argument("--warmup", type=int, choices=[0, 1], default=1)
+    parser.add_argument("--profile", choices=["fast", "full"], default="fast")
+    parser.add_argument("--force_region_detection", type=int, choices=[-1, 0, 1], default=-1)
+    parser.add_argument("--payload", choices=["min", "full"], default="min")
     args = parser.parse_args()
 
     if args.pages_dir:
-        run_pages_dir(Path(args.pages_dir))
-        return
-
+        return run_pages_dir(
+            Path(args.pages_dir),
+            warmup=bool(args.warmup),
+            profile=args.profile,
+            force_region_detection=args.force_region_detection,
+            payload_mode=args.payload,
+        )
     if args.image_path:
-        run_single_image(Path(args.image_path))
-        return
+        return run_single_image(
+            Path(args.image_path),
+            warmup=bool(args.warmup),
+            profile=args.profile,
+            force_region_detection=args.force_region_detection,
+            payload_mode=args.payload,
+        )
 
-    _emit_obj({"ok": False, "stage": "args", "err": "usage: v3_isolation_runner.py (--pages_dir DIR) | (image_path)"})
+    _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": "usage: v3_isolation_runner.py (--pages_dir DIR) | (image_path)"})
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
