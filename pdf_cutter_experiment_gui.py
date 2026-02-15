@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import queue
@@ -25,6 +26,8 @@ os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
 
+GLOBAL_ISOLATION_MODE = os.environ.get("PPSTRUCTURE_V3_ISOLATION", "0").strip().lower() in {"1", "true", "yes", "on"}
+
 try:
     import cv2
 except Exception:
@@ -34,12 +37,16 @@ try:
 except Exception:
     np = None
 
-try:
-    from paddleocr import PPStructureV3
-    PADDLE_OCR_AVAILABLE = True
-except Exception:
+if not GLOBAL_ISOLATION_MODE:
+    try:
+        from paddleocr import PPStructureV3
+        PADDLE_OCR_AVAILABLE = True
+    except Exception:
+        PPStructureV3 = None
+        PADDLE_OCR_AVAILABLE = False
+else:
     PPStructureV3 = None
-    PADDLE_OCR_AVAILABLE = False
+    PADDLE_OCR_AVAILABLE = True
 
 APP_TITLE = "PDF Cutter Experiment GUI"
 DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parent / "pdf_cutter_output"
@@ -67,22 +74,28 @@ class PageTask:
 
 
 class PaddleStructureClient:
+    ISOLATION_MODE = GLOBAL_ISOLATION_MODE
+
     def __init__(self) -> None:
-        self.enabled = bool(PADDLE_OCR_AVAILABLE and cv2 is not None and np is not None)
+        self.enabled = bool((self.ISOLATION_MODE or PADDLE_OCR_AVAILABLE) and cv2 is not None and np is not None)
         self._engine: Optional[Any] = None
         self.paddleocr_version = "unknown"
         self.paddle_version = "unknown"
         self.init_error: Optional[str] = None
-        try:
-            import paddleocr as _pocr  # type: ignore
-            self.paddleocr_version = getattr(_pocr, "__version__", "unknown")
-        except Exception:
-            pass
-        try:
-            import paddle  # type: ignore
-            self.paddle_version = getattr(paddle, "__version__", "unknown")
-        except Exception:
-            pass
+        if not self.ISOLATION_MODE:
+            try:
+                import paddleocr as _pocr  # type: ignore
+                self.paddleocr_version = getattr(_pocr, "__version__", "unknown")
+            except Exception:
+                pass
+            try:
+                import paddle  # type: ignore
+                self.paddle_version = getattr(paddle, "__version__", "unknown")
+            except Exception:
+                pass
+        else:
+            self.paddleocr_version = "isolation-subprocess"
+            self.paddle_version = "isolation-subprocess"
 
     def _ensure_engine(self) -> Tuple[bool, Optional[str]]:
         if not self.enabled:
@@ -126,6 +139,10 @@ class PaddleStructureClient:
                 cand = first.get(k)
                 if isinstance(cand, dict):
                     return cand
+        for attr in ("result", "res", "data"):
+            cand = getattr(first, attr, None)
+            if isinstance(cand, dict):
+                return cand
         return None
 
     @staticmethod
@@ -133,6 +150,67 @@ class PaddleStructureClient:
         if isinstance(obj, dict):
             return sorted([str(k) for k in obj.keys()])
         return []
+
+    @staticmethod
+    def _extract_first_object_fields(first: Any) -> Dict[str, Any]:
+        fields: Dict[str, Any] = {}
+        keys = ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]
+        if isinstance(first, dict):
+            for key in keys:
+                if key in first:
+                    fields[key] = first.get(key)
+            return fields
+        for key in keys:
+            try:
+                value = getattr(first, key, None)
+            except Exception:
+                value = None
+            if value is not None:
+                fields[key] = value
+        return fields
+
+    @staticmethod
+    def _safe_object_dir_keys(obj: Any, limit: int = 80) -> List[str]:
+        if obj is None or isinstance(obj, dict):
+            return []
+        try:
+            names = [n for n in dir(obj) if not n.startswith("_")]
+            return sorted(names)[:limit]
+        except Exception:
+            return []
+
+    def _run_isolation_runner(self, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        runner_path = Path(__file__).resolve().parent / "v3_isolation_runner.py"
+        if not runner_path.exists():
+            return None, "stage=isolation_runner err=runner file not found"
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(runner_path), str(image_path)],
+                capture_output=True,
+                text=True,
+                timeout=900,
+                check=False,
+            )
+            out = (proc.stdout or "").strip()
+            if not out:
+                stderr_tail = (proc.stderr or "").strip()[-2000:]
+                return None, f"stage=isolation_runner err=empty stdout stderr={stderr_tail}"
+            payload = json.loads(out)
+            if not isinstance(payload, dict):
+                return None, "stage=isolation_runner err=invalid payload"
+            if payload.get("ok") and isinstance(payload.get("pp_json"), dict):
+                return {
+                    "pp_json": payload["pp_json"],
+                    "pp_obj": payload.get("pp_obj", {}),
+                    "pp_meta": {"mode": "isolation_subprocess", "fallback": "v3_isolation_runner"},
+                }, None
+            stderr_tail = (proc.stderr or "").strip()[-2000:]
+            return None, f"stage={payload.get('stage','isolation_runner')} err={payload.get('err','unknown')} stderr_tail={stderr_tail}"
+        except subprocess.TimeoutExpired as e:
+            stderr_tail = ((e.stderr or "") if isinstance(e.stderr, str) else str(e.stderr or "")).strip()[-2000:]
+            return None, f"stage=isolation_runner_timeout err=timeout stderr_tail={stderr_tail}"
+        except Exception as e:
+            return None, f"stage=isolation_runner err={e}"
 
     @staticmethod
     def _is_unimplemented_runtime_error(err: Exception) -> bool:
@@ -187,7 +265,11 @@ class PaddleStructureClient:
             if not isinstance(payload, dict):
                 return None, f"stage=fallback_subprocess err=invalid payload {PIN_GUIDE}"
             if payload.get("ok") and isinstance(payload.get("pp_json"), dict):
-                return {"pp_json": payload["pp_json"], "pp_meta": {"fallback": "subprocess"}}, None
+                return {
+                    "pp_json": payload["pp_json"],
+                    "pp_obj": payload.get("pp_obj", {}),
+                    "pp_meta": {"fallback": "subprocess", "mode": "runtime_unimplemented_fallback"},
+                }, None
             return None, f"stage={payload.get('stage','fallback_subprocess')} err={payload.get('err','unknown')} {PIN_GUIDE}"
         except Exception as e:
             return None, f"stage=fallback_subprocess err={e} {PIN_GUIDE}"
@@ -200,6 +282,11 @@ class PaddleStructureClient:
     def detect(self, image_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         if not self.enabled or cv2 is None or np is None:
             return None, "PaddleOCR 설치 필요: pip install paddlepaddle paddleocr"
+        if self.ISOLATION_MODE:
+            isolated, isolated_err = self._run_isolation_runner(image_path)
+            if isolated is not None:
+                return isolated, None
+            return None, isolated_err
         ok, init_err = self._ensure_engine()
         if not ok:
             return None, f"{init_err} {PIN_GUIDE}"
@@ -231,11 +318,13 @@ class PaddleStructureClient:
 
         first = self._first_output(output)
         j = self._extract_json(first)
+        pp_obj = self._extract_first_object_fields(first)
         if not isinstance(j, dict):
             meta = {
                 "output_type": type(output).__name__,
                 "first_type": type(first).__name__ if first is not None else "None",
                 "first_keys": self._safe_keys(first),
+                "first_dir_keys": self._safe_object_dir_keys(first),
             }
             return None, f"stage=parse_json invalid json payload meta={json.dumps(meta, ensure_ascii=False)}"
 
@@ -246,7 +335,7 @@ class PaddleStructureClient:
             "json_keys": self._safe_keys(j),
         }
         _ = pp_meta
-        return {"pp_json": j}, None
+        return {"pp_json": j, "pp_obj": pp_obj, "pp_meta": pp_meta}, None
 
 # =========================================================
 # 유틸 함수 모음
@@ -351,6 +440,7 @@ class PDFCutterApp:
         self.input_files: List[Path] = []
         self.stop_event = threading.Event()
         self.worker_thread: Optional[threading.Thread] = None
+        self.warmup_thread: Optional[threading.Thread] = None
         self.log_queue: "queue.Queue[str]" = queue.Queue()
 
         self.output_root_var = tk.StringVar(value=str(DEFAULT_OUTPUT_ROOT))
@@ -415,6 +505,8 @@ class PDFCutterApp:
         self.start_btn.pack(side=tk.LEFT, padx=4)
         self.stop_btn = ttk.Button(ctl_frame, text="Stop", command=self.stop, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=4)
+        self.warmup_btn = ttk.Button(ctl_frame, text="V3 모델 캐시 워밍업", command=self.warmup_v3_cache)
+        self.warmup_btn.pack(side=tk.LEFT, padx=4)
 
         ttk.Label(ctl_frame, textvariable=self.progress_label_var).pack(side=tk.LEFT, padx=16)
 
@@ -488,6 +580,51 @@ class PDFCutterApp:
         self.worker_thread = threading.Thread(target=self._run_pipeline, daemon=True)
         self.worker_thread.start()
 
+    def warmup_v3_cache(self) -> None:
+        if self.warmup_thread and self.warmup_thread.is_alive():
+            self.log("⚠️ V3 워밍업이 이미 실행 중입니다.")
+            return
+        self.warmup_btn.configure(state=tk.DISABLED)
+        self.warmup_thread = threading.Thread(target=self._run_warmup_subprocess, daemon=True)
+        self.warmup_thread.start()
+
+    def _run_warmup_subprocess(self) -> None:
+        cmd = [
+            sys.executable,
+            "-c",
+            "from paddleocr import PPStructureV3; print('warmup'); PPStructureV3(); print('ok')",
+        ]
+        self.log(f"ℹ️ [Warmup] start cmd={' '.join(cmd[:2])} ...")
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+
+            def _pump(stream, prefix: str) -> None:
+                if stream is None:
+                    return
+                for line in stream:
+                    self.log(f"{prefix} {line.rstrip()}")
+
+            t_out = threading.Thread(target=_pump, args=(proc.stdout, "[Warmup][stdout]"), daemon=True)
+            t_err = threading.Thread(target=_pump, args=(proc.stderr, "[Warmup][stderr]"), daemon=True)
+            t_out.start()
+            t_err.start()
+            try:
+                rc = proc.wait(timeout=900)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                self.log("❌ [Warmup] timeout(900s)")
+                rc = -1
+            t_out.join(timeout=2)
+            t_err.join(timeout=2)
+            if rc == 0:
+                self.log("✅ [Warmup] 완료")
+            else:
+                self.log(f"❌ [Warmup] 실패 rc={rc}")
+        except Exception as e:
+            self.log(f"❌ [Warmup] stage=run err={e}")
+        finally:
+            self.root.after(0, lambda: self.warmup_btn.configure(state=tk.NORMAL))
+
     def stop(self) -> None:
         self.stop_event.set()
         self.log("🛑 Stop 요청 수신: 현재 작업 이후 즉시 중단합니다.")
@@ -500,6 +637,13 @@ class PDFCutterApp:
         try:
             output_root = Path(self.output_root_var.get())
             workers = max(MIN_WORKERS, min(MAX_WORKERS, int(self.workers_var.get())))
+            if self.paddle_client.ISOLATION_MODE and workers != 1:
+                self.log("⚠ Isolation mode: workers forced to 1")
+                workers = 1
+                self.root.after(0, lambda: self.workers_var.set(1))
+            elif self.paddle_client.ISOLATION_MODE:
+                self.log("⚠ Isolation mode: workers forced to 1")
+                workers = 1
             dpi = max(MIN_DPI, min(MAX_DPI, int(self.dpi_var.get())))
 
             (output_root / "out_pages").mkdir(parents=True, exist_ok=True)
@@ -640,12 +784,17 @@ class PDFCutterApp:
                 stage = "detect"
                 if raw and "stage=" in raw:
                     stage = raw.split("stage=", 1)[1].split()[0]
+                extras = None
+                if raw and "stderr_tail=" in raw:
+                    stderr_tail = raw.split("stderr_tail=", 1)[1][:2000]
+                    extras = {"stderr_tail": stderr_tail}
                 self._write_page_error(
                     errors_dir,
                     task.page_number,
                     task.page_png_path,
                     raw or "parse failed",
                     stage=stage,
+                    extras=extras,
                 )
                 self.log(f"❌ [Fail] P{task.page_number:03d} stage={stage} err={(raw or 'parse fail')}")
                 if stage == "paddle_runtime_unimplemented":
@@ -666,6 +815,8 @@ class PDFCutterApp:
                         "text_candidates": trace.get("text_candidates", []),
                         "pp_meta": trace.get("pp_meta", {}),
                         "pp_json_sample": trace.get("pp_json_sample", {}),
+                        "trace_stats": trace.get("trace_stats", {}),
+                        "pp_obj_keys": trace.get("pp_obj_keys", []),
                     },
                 )
                 self.log(f"❌ [Fail] P{task.page_number:03d} stage=parse_anchors err=anchors=0")
@@ -777,44 +928,119 @@ class PDFCutterApp:
         return []
 
     @staticmethod
-    def _extract_text_bbox_candidates(item: Any) -> List[Tuple[str, Optional[List[int]]]]:
+    def _extract_text_bbox_candidates(
+        item: Any,
+        depth: int = 0,
+        max_depth: int = 4,
+        visited: Optional[set] = None,
+        cap: int = 500,
+    ) -> List[Tuple[str, Optional[List[int]]]]:
         out: List[Tuple[str, Optional[List[int]]]] = []
+        if depth > max_depth or item is None:
+            return out
+        if visited is None:
+            visited = set()
+        try:
+            oid = id(item)
+            if oid in visited:
+                return out
+            visited.add(oid)
+        except Exception:
+            pass
+
         if isinstance(item, dict):
             text = ""
-            for k in ("text", "ocrText", "rec_text", "content"):
+            for k in ("text", "ocrText", "rec_text", "content", "transcription"):
                 if isinstance(item.get(k), str):
                     text = item.get(k).strip()
                     if text:
                         break
             bbox = None
-            for bk in ("text_region", "bbox", "xyxy", "points", "polygon"):
+            for bk in ("text_region", "bbox", "xyxy", "points", "polygon", "poly"):
                 if bk in item:
                     bbox = PDFCutterApp._poly_to_bbox(item.get(bk))
                     if bbox is not None:
                         break
             if text:
                 out.append((text, bbox))
-            for lk in ("words", "lines", "text_lines", "ocr", "ocr_result"):
-                for node in PDFCutterApp._pick_list_by_keys(item.get(lk), [lk]):
-                    out.extend(PDFCutterApp._extract_text_bbox_candidates(node))
-        elif isinstance(item, (list, tuple)) and len(item) >= 2:
-            bbox = PDFCutterApp._poly_to_bbox(item[0])
-            text = ""
-            info = item[1]
-            if isinstance(info, (list, tuple)) and info:
-                text = str(info[0]).strip()
-            elif isinstance(info, str):
-                text = info.strip()
-            if text:
-                out.append((text, bbox))
-        return out
+                if len(out) >= cap:
+                    return out
+
+            for val in item.values():
+                if len(out) >= cap:
+                    break
+                if not isinstance(val, (dict, list, tuple)):
+                    continue
+                out.extend(PDFCutterApp._extract_text_bbox_candidates(val, depth + 1, max_depth, visited, cap - len(out)))
+        elif isinstance(item, (list, tuple)):
+            if len(item) >= 2:
+                bbox = PDFCutterApp._poly_to_bbox(item[0])
+                text = ""
+                info = item[1]
+                if isinstance(info, (list, tuple)) and info:
+                    text = str(info[0]).strip()
+                elif isinstance(info, str):
+                    text = info.strip()
+                if text:
+                    out.append((text, bbox))
+                    if len(out) >= cap:
+                        return out
+            for node in item:
+                if len(out) >= cap:
+                    break
+                if not isinstance(node, (dict, list, tuple)):
+                    continue
+                out.extend(PDFCutterApp._extract_text_bbox_candidates(node, depth + 1, max_depth, visited, cap - len(out)))
+        return out[:cap]
+
+    @staticmethod
+    def _obj_get(source: Any, key: str, default: Any = None) -> Any:
+        if isinstance(source, dict):
+            return source.get(key, default)
+        try:
+            value = getattr(source, key, default)
+        except Exception:
+            value = default
+        return default if value is None else value
+
+    @staticmethod
+    def _ensure_list(source: Any) -> List[Any]:
+        if isinstance(source, list):
+            return source
+        if isinstance(source, tuple):
+            return list(source)
+        return []
+
+    def _collect_text_candidates_from_source(self, source: Any, trace_samples: List[Dict[str, Any]], cap: int = 40) -> List[Tuple[str, List[int]]]:
+        results: List[Tuple[str, List[int]]] = []
+        if source is None:
+            return results
+        for txt, bbox in self._extract_text_bbox_candidates(source):
+            if bbox is None:
+                continue
+            if len(trace_samples) < cap and TRACE_MODE:
+                trace_samples.append({"text": txt, "bbox": bbox})
+            results.append((str(txt), bbox))
+        return results
 
     def _normalize_structure(self, data: Dict[str, Any], page_w: int, page_h: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         pp_json = data.get("pp_json", {}) if isinstance(data, dict) else {}
+        pp_obj = data.get("pp_obj", {}) if isinstance(data, dict) else {}
+        if isinstance(pp_json, dict) and isinstance(pp_json.get("res"), str):
+            try:
+                parsed_res = ast.literal_eval(pp_json.get("res"))
+                if isinstance(parsed_res, dict):
+                    pp_json["res"] = parsed_res
+                else:
+                    if isinstance(data, dict):
+                        data.setdefault("_parse_errors", []).append("stage=parse_json res string did not evaluate to dict")
+            except Exception as e:
+                if isinstance(data, dict):
+                    data.setdefault("_parse_errors", []).append(f"stage=parse_json res string parse failed err={e}")
+
         layout = self._pick_list_by_keys(pp_json, ["prunedResult", "res", "result", "layout", "outputs", "regions"])
         if not layout:
             layout = self._pick_list_by_keys(data.get("layout", []) if isinstance(data, dict) else [], ["res", "layout"])
-        trace_samples: List[Dict[str, Any]] = []
 
         if DEBUG_MODE and layout and not self._layout_keys_logged and isinstance(layout[0], dict):
             self.log(f"🔎 [PPStructure] layout[0].keys={sorted(layout[0].keys())}")
@@ -822,9 +1048,140 @@ class PDFCutterApp:
 
         strict_pat = re.compile(r"^\s*\d{4}\s*$")
         weak_pat = re.compile(r"^\s*0*\d{1,4}\s*$")
+        leading_num_pat = re.compile(r"^\s*0*(\d{1,4})([.)]|\s|$)")
+        strict_num_pat = re.compile(r"^\s*0*(\d{1,4})\s*([.)]|$)")
+        fallback_num_pat = re.compile(r"\b0*(\d{1,4})\b")
+
         anchors: List[Dict[str, Any]] = []
-        weak_anchor_candidates: List[Dict[str, Any]] = []
         objects: List[Dict[str, Any]] = []
+        candidate_cap = 500
+        trace_cap = 30
+        token_keys = ("ocr", "text", "rec", "word", "line")
+
+        trace_stats: Dict[str, int] = {
+            "candidate_texts": 0,
+            "candidate_with_bbox": 0,
+            "regex_pass": 0,
+            "passA": 0,
+            "passB": 0,
+            "passC": 0,
+            "anchors": 0,
+        }
+        trace_samples: List[Dict[str, Any]] = []
+
+        def _collect_sources_from_token_keys(root: Any, depth: int = 0, max_depth: int = 4, visited: Optional[set] = None) -> List[Any]:
+            out: List[Any] = []
+            if root is None or depth > max_depth:
+                return out
+            if visited is None:
+                visited = set()
+            rid = id(root)
+            if rid in visited:
+                return out
+            visited.add(rid)
+            if isinstance(root, dict):
+                for k, v in root.items():
+                    key = str(k).lower()
+                    if isinstance(v, (dict, list, tuple)) and any(tok in key for tok in token_keys):
+                        out.append(v)
+                    if isinstance(v, (dict, list, tuple)):
+                        out.extend(_collect_sources_from_token_keys(v, depth + 1, max_depth, visited))
+            elif isinstance(root, (list, tuple)):
+                for it in root:
+                    if isinstance(it, (dict, list, tuple)):
+                        out.extend(_collect_sources_from_token_keys(it, depth + 1, max_depth, visited))
+            return out
+
+        def _parse_qid(txt: str, allow_fallback: bool = False) -> Optional[int]:
+            m = leading_num_pat.match(txt) or strict_num_pat.match(txt)
+            if m:
+                qid0 = int(m.group(1))
+                return qid0 if 0 < qid0 <= 9999 else None
+            if not allow_fallback:
+                return None
+            m2 = fallback_num_pat.search(txt)
+            if not m2:
+                return None
+            qid1 = int(m2.group(1))
+            return qid1 if 0 < qid1 <= 9999 else None
+
+        def _pass_geom(bbox: List[int], stage: str) -> bool:
+            lx1, ly1, lx2, ly2 = bbox
+            bw = max(0, lx2 - lx1)
+            bh = max(0, ly2 - ly1)
+            cx = (lx1 + lx2) / 2
+            col = 0 if cx < (page_w * 0.5) else 1
+            if stage == "A":
+                if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
+                    return False
+                if col == 0 and lx1 > (0.35 * page_w):
+                    return False
+                if col == 1 and lx1 < (0.50 * page_w):
+                    return False
+                return True
+            if stage == "B":
+                if not (bh <= (0.18 * page_h) and bw <= (0.30 * page_w)):
+                    return False
+                if col == 0 and lx1 > (0.35 * page_w):
+                    return False
+                if col == 1 and lx1 < (0.50 * page_w):
+                    return False
+                return True
+            if not (bh <= (0.22 * page_h) and bw <= (0.35 * page_w)):
+                return False
+            if col == 0 and lx1 > (0.40 * page_w):
+                return False
+            if col == 1 and lx1 < (0.45 * page_w):
+                return False
+            return True
+
+        ocr_candidate_sources: List[Any] = []
+        seen_sources: set = set()
+
+        def _push_source(source: Any) -> None:
+            if source is None:
+                return
+            sid = id(source)
+            if sid in seen_sources:
+                return
+            seen_sources.add(sid)
+            ocr_candidate_sources.append(source)
+
+        _push_source(self._obj_get(pp_obj, "overall_ocr_res"))
+        for parsing_item in self._ensure_list(self._obj_get(pp_obj, "parsing_res_list")):
+            _push_source(self._obj_get(parsing_item, "overall_ocr_res"))
+        for obj_key in ("region_det_res", "layout_det_res"):
+            _push_source(self._obj_get(pp_obj, obj_key))
+
+        for src in _collect_sources_from_token_keys(pp_obj):
+            _push_source(src)
+        if isinstance(pp_json, dict):
+            for src in _collect_sources_from_token_keys(pp_json):
+                _push_source(src)
+            if isinstance(pp_json.get("res"), dict):
+                for src in _collect_sources_from_token_keys(pp_json.get("res")):
+                    _push_source(src)
+
+        records: List[Dict[str, Any]] = []
+        rec_seen: set = set()
+
+        for source in ocr_candidate_sources:
+            for txt, line_bbox in self._extract_text_bbox_candidates(source, max_depth=4, cap=candidate_cap):
+                trace_stats["candidate_texts"] += 1
+                if line_bbox is None:
+                    continue
+                trace_stats["candidate_with_bbox"] += 1
+                rec_key = (str(txt), tuple(line_bbox))
+                if rec_key in rec_seen:
+                    continue
+                rec_seen.add(rec_key)
+                lx1, ly1, lx2, ly2 = line_bbox
+                col = 0 if ((lx1 + lx2) / 2) < (page_w * 0.5) else 1
+                records.append({"text": str(txt), "bbox": line_bbox, "col": col, "strict": bool(strict_pat.match(str(txt)) or weak_pat.match(str(txt)))})
+                if len(records) >= candidate_cap:
+                    break
+            if len(records) >= candidate_cap:
+                break
 
         for block in layout:
             if not isinstance(block, dict):
@@ -843,39 +1200,73 @@ class PDFCutterApp:
             if btype not in {"text", "title", "list", "paragraph"}:
                 continue
             lines = self._pick_list_by_keys(block, ["res", "words", "lines", "text_lines", "ocr", "ocr_result"])
-            candidate_nodes = [block] + lines
-            for line in candidate_nodes:
-                for txt, line_bbox in self._extract_text_bbox_candidates(line):
+            for line in [block] + lines:
+                for txt, line_bbox in self._extract_text_bbox_candidates(line, max_depth=4, cap=120):
+                    trace_stats["candidate_texts"] += 1
                     if line_bbox is None:
                         continue
-                    if len(trace_samples) < 20 and TRACE_MODE:
-                        trace_samples.append({"text": txt, "bbox": line_bbox})
-                    is_strict = bool(strict_pat.match(txt))
-                    is_weak = bool(weak_pat.match(txt))
-                    if not (is_strict or is_weak):
+                    trace_stats["candidate_with_bbox"] += 1
+                    rec_key = (str(txt), tuple(line_bbox))
+                    if rec_key in rec_seen:
                         continue
-                    qid = int(txt) if txt else 0
-                    lx1, ly1, lx2, ly2 = line_bbox
-                    bw = max(0, lx2 - lx1)
-                    bh = max(0, ly2 - ly1)
-                    cx = (line_bbox[0] + line_bbox[2]) / 2
-                    col = 0 if cx < (page_w * 0.5) else 1
+                    rec_seen.add(rec_key)
+                    lx1, _, lx2, _ = line_bbox
+                    col = 0 if ((lx1 + lx2) / 2) < (page_w * 0.5) else 1
+                    records.append({"text": str(txt), "bbox": line_bbox, "col": col, "strict": bool(strict_pat.match(str(txt)) or weak_pat.match(str(txt)))})
+                    if len(records) >= candidate_cap:
+                        break
+                if len(records) >= candidate_cap:
+                    break
+            if len(records) >= candidate_cap:
+                break
 
-                    if not (bh <= (0.12 * page_h) and bw <= (0.20 * page_w)):
-                        continue
-                    if col == 0 and lx1 > (0.35 * page_w):
-                        continue
-                    if col == 1 and lx1 < (0.50 * page_w):
-                        continue
+        regex_records: List[Dict[str, Any]] = []
+        strict_regex_count = 0
+        for rec in records:
+            qid = _parse_qid(rec["text"], allow_fallback=False)
+            if qid is None:
+                continue
+            trace_stats["regex_pass"] += 1
+            cand = {"id": qid, "bbox": rec["bbox"], "col": rec["col"], "strict": rec["strict"], "text": rec["text"]}
+            regex_records.append(cand)
+            if cand["strict"]:
+                strict_regex_count += 1
 
-                    cand = {"id": qid, "bbox": line_bbox, "col": col}
-                    if is_strict:
-                        anchors.append(cand)
-                    else:
-                        weak_anchor_candidates.append(cand)
+        if strict_regex_count == 0:
+            for rec in records:
+                if any((r["bbox"] == rec["bbox"] and r["text"] == rec["text"]) for r in regex_records):
+                    continue
+                qid = _parse_qid(rec["text"], allow_fallback=True)
+                if qid is None:
+                    continue
+                trace_stats["regex_pass"] += 1
+                regex_records.append({"id": qid, "bbox": rec["bbox"], "col": rec["col"], "strict": False, "text": rec["text"]})
 
-        if not anchors and weak_anchor_candidates:
-            anchors = weak_anchor_candidates
+        def _filter_by_stage(stage: str, source: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            filtered = [c for c in source if _pass_geom(c["bbox"], stage)]
+            trace_stats[f"pass{stage}"] = len(filtered)
+            if stage == "A" and TRACE_MODE:
+                for c in filtered[:trace_cap]:
+                    trace_samples.append({"text": c["text"], "bbox": c["bbox"], "id": c["id"]})
+            strict_only = [c for c in filtered if c["strict"]]
+            return strict_only if strict_only else filtered
+
+        anchors = _filter_by_stage("A", regex_records)
+        if not anchors:
+            anchors = _filter_by_stage("B", regex_records)
+        if not anchors:
+            anchors = _filter_by_stage("C", regex_records)
+
+        dedup_anchors: List[Dict[str, Any]] = []
+        seen_anchor = set()
+        for a in anchors:
+            ak = (a["id"], tuple(a["bbox"]), a["col"])
+            if ak in seen_anchor:
+                continue
+            seen_anchor.add(ak)
+            dedup_anchors.append({"id": a["id"], "bbox": a["bbox"], "col": a["col"]})
+        anchors = dedup_anchors
+        trace_stats["anchors"] = len(anchors)
 
         if DEBUG_MODE and not anchors and layout:
             sample = layout[0] if isinstance(layout[0], dict) else {"sample": str(layout[0])}
@@ -891,6 +1282,9 @@ class PDFCutterApp:
                 "pp_json_keys": sorted(pp_json.keys()) if isinstance(pp_json, dict) else [],
                 "pp_json_sample": pp_json_sample,
                 "text_candidates": trace_samples,
+                "parse_errors": data.get("_parse_errors", []),
+                "trace_stats": trace_stats,
+                "pp_obj_keys": sorted(pp_obj.keys())[:50] if isinstance(pp_obj, dict) and not anchors else [],
             }
 
         anchors.sort(key=lambda a: (a["col"], a["bbox"][1], a["bbox"][0]))
