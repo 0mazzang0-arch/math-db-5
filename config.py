@@ -1,37 +1,39 @@
 # config.py
 
 import os
+from dotenv import load_dotenv
 from google.ai.generativelanguage_v1beta.types import content
 
-# config.py
+# 1. 비밀 금고(.env) 로드
+load_dotenv()
 
-GOOGLE_API_KEYS = [
-    # --- A 계정에서 받은 키 ---
-    "AIzaSyBgKpCw0pr2YE5uxw0a1zGvYey5cdRnFPE",
-    "AIzaSyBcmzd2zatBSFypTf-TfJItVXAbbbBxphQ",
-    "AIzaSyBO9106GmrTWQYTrwzeDbM_d-F1n9gMlGs",
-    "AIzaSyCJ24w2wfiUe59M7YWQ5UIyyYXAGsaKnxQ",
-    "AIzaSyDl_gofYjq24Qm2x15pe9-EZGzVBKHAR88",
-    
+# ==========================
+# [API 키 설정] - .env에서 로드 (보안 강화)
+# ==========================
 
-]
+# 1. Google Gemini Keys
+raw_google_keys = os.getenv("GOOGLE_API_KEYS")
+if raw_google_keys:
+    # 콤마로 구분된 문자열을 리스트로 변환 및 공백 제거
+    GOOGLE_API_KEYS = [k.strip() for k in raw_google_keys.split(",") if k.strip()]
+else:
+    GOOGLE_API_KEYS = []
 
-# 2. OpenAI Key (Gemini가 포기했을 때 투입되는 용병)
-OPENAI_API_KEY = "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"
+# 2. OpenAI Key
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # 3. Notion Keys
-NOTION_API_KEY = "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"
-NOTION_DATABASE_ID = "2f89c36bb12a808c937ac179959da411"
-NOTION_CONCEPT_DB_ID = "3009c36bb12a80e28181ca6ecd9d7139"
+NOTION_API_KEY = os.getenv("NOTION_API_KEY")
+NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+NOTION_CONCEPT_DB_ID = os.getenv("NOTION_CONCEPT_DB_ID")
 
 # ==========================
 # [경로 설정] - (하이브리드 모드: 본체는 D드라이브, 감시는 G드라이브)
 # ==========================
 # 1. 프로그램 본체 위치 (D:\math-db-5)
-# 현재 파일이 있는 곳을 기준으로 잡습니다.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 데이터 파일들 (MD파일, CSV) -> 이것들은 D드라이브에 있는 게 안전하고 빠릅니다.
+# 데이터 파일들
 MD_DIR_PATH = os.path.join(BASE_DIR, "Notion_Problems_Final")
 CSV_FILE_PATH = os.path.join(BASE_DIR, "찐 모든 기출문제 출처.csv")
 CATEGORY_FILE_PATH = os.path.join(MD_DIR_PATH, "수학비서 유형.txt")
@@ -43,30 +45,25 @@ CATEGORY_FILE_PATH = os.path.join(MD_DIR_PATH, "수학비서 유형.txt")
 WATCH_ROOT_DIR = r"G:\내 드라이브\문제업로드"
 WORK_STAGING_DIR = r"G:\내 드라이브\작업대"  # AutoCropper 작업 공간
 
-# 레거시 호환용 변수 (main.py가 쓸 수도 있음)
+# 레거시 호환용 변수
 DRIVE_WATCH_FOLDER = WATCH_ROOT_DIR
 CONCEPT_WATCH_FOLDER = r"G:\내 드라이브\실전개념"
 
-# (안전장치) 만약 G드라이브가 연결 안 되어 있으면, 임시로 D드라이브를 봅니다.
+# (안전장치) G드라이브 미연결 시 로컬 폴더 사용
 if not os.path.exists(WATCH_ROOT_DIR):
     print("⚠️ 경고: 구글 드라이브(G:)가 감지되지 않습니다. 로컬 폴더를 임시로 사용합니다.")
     WATCH_ROOT_DIR = os.path.join(BASE_DIR, "문제업로드")
     WORK_STAGING_DIR = os.path.join(BASE_DIR, "작업대")
 
-# 세부 감시 경로 자동 설정 (위에서 정한 WATCH_ROOT_DIR 아래에 만듦)
+# 세부 감시 경로 자동 설정
 DEEP_WATCH_DIR = os.path.join(WATCH_ROOT_DIR, "[1]_오답분석_Deep")
 FAST_WATCH_DIR = os.path.join(WATCH_ROOT_DIR, "[2]_자료수집_Fast")
 
 # [폴더 자동 생성]
-# 이제 위에서 G드라이브로 잡혔으면 G드라이브에, 없으면 D드라이브에 만듭니다.
 for d in [WORK_STAGING_DIR, WATCH_ROOT_DIR, DEEP_WATCH_DIR, FAST_WATCH_DIR]:
     if not os.path.exists(d):
         try: os.makedirs(d)
         except: pass
-
-
-DRIVE_WATCH_FOLDER = r"G:\내 드라이브\문제업로드" # (Legacy 호환용 유지)
-CONCEPT_WATCH_FOLDER = r"G:\내 드라이브\실전개념"
 
 # [GitHub 이미지 호스팅 설정]
 GITHUB_USERNAME = "0mazzang0-arch"
@@ -92,11 +89,13 @@ LOCAL_REPO_PATHS = [
 # ==========================
 # [모델 설정]
 # ==========================
-# 사용자님 API 키로 확인된 최신 모델 적용
-MODEL_NAME_OCR = "models/gemini-3-flash-preview"       # 업로드 및 OCR용 (빠름)
-MODEL_NAME_ANALYSIS = "models/gemini-3-pro-preview"    # 1타 강사 분석용 (고성능)
-OPENAI_MODEL_NAME = "gpt-5.2-pro"# ==========================
+MODEL_NAME_OCR = "models/gemini-3-flash-preview"       # 업로드 및 OCR용
+MODEL_NAME_ANALYSIS = "models/gemini-3-pro-preview"    # 1타 강사 분석용
+OPENAI_MODEL_NAME = "gpt-5.2-pro"
+
+# ==========================
 # [JSON Schema 정의]
+# (아래 내용은 기존 파일 내용을 그대로 유지하세요)
 # ==========================
 MATH_PROBLEM_SCHEMA = {
     "type": content.Type.OBJECT,
