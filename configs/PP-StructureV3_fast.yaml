@@ -5,6 +5,8 @@ SubModules:
     model_dir:
     model_name: PP-Chart2Table
     module_name: chart_recognition
+    enabled: false
+    use_chart_recognition: false
   LayoutDetection:
     batch_size: 8
     layout_merge_bboxes_mode:

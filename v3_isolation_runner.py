@@ -509,6 +509,14 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         # Fast tuning via value-only toggles (preserve full export structure).
         data["batch_size"] = 1
 
+        submodules = data.get("SubModules")
+        if isinstance(submodules, dict):
+            chart_module = submodules.get("ChartRecognition")
+            if isinstance(chart_module, dict):
+                # Keep block for schema stability, but request explicit disable in-module.
+                chart_module["enabled"] = False
+                chart_module["use_chart_recognition"] = False
+
         subpipes = data.get("SubPipelines")
         if isinstance(subpipes, dict):
             doc_pre = subpipes.get("DocPreprocessor")
