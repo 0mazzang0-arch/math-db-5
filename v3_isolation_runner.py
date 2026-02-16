@@ -424,14 +424,16 @@ def _poly_to_bbox(poly: Any) -> List[int]:
     return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
 
 
-def _iter_ocr_items(obj: Any):
+def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None):
     if isinstance(obj, dict):
+        cur_bbox = _extract_bbox(obj) or (inherited_bbox or [])
+
         text = _extract_text(obj)
         if text:
-            yield text, _extract_bbox(obj)
+            yield text, cur_bbox
 
         # Parallel OCR arrays: polys + texts
-        polys = obj.get("dt_polys") or obj.get("polys") or obj.get("boxes")
+        polys = obj.get("dt_polys") or obj.get("polys") or obj.get("boxes") or obj.get("dt_boxes")
         texts = obj.get("rec_text") or obj.get("rec_res") or obj.get("texts") or obj.get("text")
         if hasattr(polys, "tolist"):
             try:
@@ -446,29 +448,39 @@ def _iter_ocr_items(obj: Any):
         if isinstance(polys, (list, tuple)) and isinstance(texts, (list, tuple)) and polys and texts:
             for poly, txt in zip(polys, texts):
                 if isinstance(txt, str) and txt.strip():
-                    yield txt, _poly_to_bbox(poly)
+                    pb = _poly_to_bbox(poly) or cur_bbox
+                    yield txt, pb
 
         skip_keys = {"dt_polys", "polys", "boxes", "dt_boxes", "rec_text", "rec_res", "texts", "text"} | _SKIP_HEAVY_KEYS
         for k, v in obj.items():
             if k in skip_keys:
                 continue
-            yield from _iter_ocr_items(v)
+            yield from _iter_ocr_items(v, cur_bbox)
         return
 
     if isinstance(obj, (list, tuple)):
-        # PaddleOCR-like tuples: [poly_points, (text, score)] or [poly_points, text]
+        # Pair polymorphism: [poly, (text,score)] / [poly,text] / [(text,score),poly] / [text,poly]
+        paired = False
         if len(obj) >= 2:
-            bbox = _poly_to_bbox(obj[0])
-            second = obj[1]
-            text = ""
-            if isinstance(second, str):
-                text = second
-            elif isinstance(second, (list, tuple)) and second and isinstance(second[0], str):
-                text = second[0]
-            if text:
-                yield text, bbox
+            a, b = obj[0], obj[1]
+            candidates = [(a, b), (b, a)]
+            for poly_like, text_like in candidates:
+                pb = _poly_to_bbox(poly_like)
+                txt = ""
+                if isinstance(text_like, str):
+                    txt = text_like
+                elif isinstance(text_like, (list, tuple)) and text_like and isinstance(text_like[0], str):
+                    txt = text_like[0]
+                if txt:
+                    yield txt, (pb or inherited_bbox or [])
+                    paired = True
+                    break
+
+        if paired:
+            return
+
         for it in obj:
-            yield from _iter_ocr_items(it)
+            yield from _iter_ocr_items(it, inherited_bbox)
 
 
 def _normalize_anchor_text(text: str) -> str:
@@ -765,11 +777,6 @@ def _export_full_yaml_if_missing(full_yaml: Path) -> None:
         _stage(f"full_yaml_export_invalid err={reason2}")
         raise RuntimeError(reason2)
 
-    cfg2 = _load_yaml_with_fallback(full_yaml)
-    ok2, reason2 = _validate_export_schema(cfg2, "full_yaml_exported")
-    if not ok2:
-        _stage(f"full_yaml_export_invalid err={reason2}")
-        raise RuntimeError(reason2)
 
 def _load_yaml_with_fallback(path: Path) -> Dict[str, Any]:
     try:
