@@ -31,6 +31,7 @@ _MIN_PAYLOAD_KEYS = {
 _MAX_LIST_LEN = 2000
 _MAX_DICT_KEYS = 200
 _MAX_DUMP_CHARS = 200 * 1024
+_MAX_MIN_ANCHORS = 50
 _QUIET = False
 _JSONL_OUT_PATH = ""
 
@@ -131,7 +132,7 @@ def _build_min_anchors(anchors: Any) -> List[Dict[str, Any]]:
     if not isinstance(anchors, list):
         return []
     out: List[Dict[str, Any]] = []
-    for item in anchors[:_MAX_LIST_LEN]:
+    for item in anchors[:_MAX_MIN_ANCHORS]:
         if not isinstance(item, dict):
             continue
         bbox = item.get("bbox")
@@ -342,29 +343,34 @@ def _normalize_anchor_text(text: str) -> str:
     return " ".join(t.strip().split())
 
 
-def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
+def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, List[str]]:
     anchors: List[Dict[str, Any]] = []
     objects: List[Dict[str, Any]] = []
     seen_anchor = set()
     seen_obj = set()
     candidate_text_count = 0
+    candidate_samples: List[str] = []
+    seen_sample = set()
 
     sources: List[Any] = []
-    if isinstance(pp_json, dict):
-        if "res" in pp_json:
-            sources.append(pp_json.get("res"))
-        sources.append(pp_json)
     if isinstance(pp_obj, dict):
         for key in ("overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"):
             if key in pp_obj:
                 sources.append(pp_obj.get(key))
         sources.append(pp_obj)
+    if isinstance(pp_json, dict):
+        if "res" in pp_json:
+            sources.append(pp_json.get("res"))
+        sources.append(pp_json)
 
     for src in sources:
         for node in _iter_dicts(src):
             text = _normalize_anchor_text(_extract_text(node))
             if text:
                 candidate_text_count += 1
+                if len(candidate_samples) < 5 and text not in seen_sample:
+                    seen_sample.add(text)
+                    candidate_samples.append(text)
 
             bbox = _extract_bbox(node)
             if not bbox:
@@ -395,7 +401,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                     objects.append({"type": obj_type, "bbox": bbox})
 
     anchors.sort(key=lambda a: (a.get("bbox", [0, 0, 0, 0])[1], a.get("bbox", [0, 0, 0, 0])[0]))
-    return anchors, objects, candidate_text_count
+    return anchors, objects, candidate_text_count, candidate_samples
 
 
 def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
@@ -757,12 +763,11 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
                 "predict_flags": flags,
             }
 
-        pp_obj = _extract_first_object_fields(first)
-        pp_obj_min = _extract_first_object_fields(
+        pp_obj = _extract_first_object_fields(
             first,
             keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
         )
-        anchors, objects, candidate_count = _extract_min_entities(pp_json, pp_obj)
+        anchors, objects, candidate_count, candidate_samples = _extract_min_entities(pp_json, pp_obj)
         payload = {
             "ok": True,
             "page_file": page_name,
@@ -774,9 +779,13 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             "t_page_ms": round(t_page_ms, 3),
             "predict_flags": flags,
         }
-        if pp_obj_min:
-            payload["pp_obj"] = pp_obj_min
-        print(f"[debug] {page_name} candidates={candidate_count} anchors={len(anchors)}", file=sys.stderr, flush=True)
+        if pp_obj:
+            payload["pp_obj"] = pp_obj
+        print(
+            f"[debug] {page_name} candidates={candidate_count} matches={len(anchors)} sample={json.dumps(candidate_samples, ensure_ascii=True)}",
+            file=sys.stderr,
+            flush=True,
+        )
         return payload
     except Exception as e:
         t_page_ms = (time.perf_counter() - page_start) * 1000.0
