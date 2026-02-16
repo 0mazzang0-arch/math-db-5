@@ -29,6 +29,7 @@ _MIN_PAYLOAD_KEYS = {
 _MAX_LIST_LEN = 2000
 _MAX_DICT_KEYS = 200
 _MAX_DUMP_CHARS = 200 * 1024
+_PP_OBJ_MIN_KEYS = ("overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res")
 _QUIET = False
 _JSONL_OUT_PATH = ""
 
@@ -125,11 +126,26 @@ def _sanitize_value(value: Any) -> Any:
     return value
 
 
+def _build_min_pp_obj(pp_obj: Any) -> Dict[str, Any]:
+    if not isinstance(pp_obj, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for key in _PP_OBJ_MIN_KEYS:
+        if key in pp_obj and pp_obj[key] is not None:
+            out[key] = _sanitize_value(pp_obj[key])
+    return out
+
+
 def _build_min_payload(payload: Dict[str, Any], fallback_page_file: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {"page_file": payload.get("page_file", fallback_page_file)}
     for key in _MIN_PAYLOAD_KEYS:
         if key in payload:
             out[key] = payload[key]
+
+    pp_obj_min = _build_min_pp_obj(payload.get("pp_obj"))
+    if pp_obj_min:
+        out["pp_obj"] = pp_obj_min
+
     out.setdefault("stage", payload.get("stage", "predict_done"))
     out.setdefault("profile", payload.get("profile", "fast"))
     out.setdefault("ok", bool(payload.get("ok", False)))
@@ -423,11 +439,6 @@ def _export_full_yaml_if_missing(full_yaml: Path) -> None:
         _stage(f"full_yaml_export_invalid err={reason2}")
         raise RuntimeError(reason2)
 
-    cfg2 = _load_yaml_with_fallback(full_yaml)
-    ok2, reason2 = _validate_export_schema(cfg2, "full_yaml_exported")
-    if not ok2:
-        _stage(f"full_yaml_export_invalid err={reason2}")
-        raise RuntimeError(reason2)
 
 def _load_yaml_with_fallback(path: Path) -> Dict[str, Any]:
     try:
