@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import time
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -13,15 +14,24 @@ _LAST_EMIT_MS = 0.0
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "configs"
 _ANCHOR_RE = re.compile(r"^\s*([A-C])\s*([0-9]{1,3})?\s*$")
-_FAST_DISABLE_KEYS = {
-    "use_table_recognition",
-    "use_formula_recognition",
-    "use_chart_recognition",
-    "use_seal_recognition",
-    "use_doc_unwarping",
-    "use_doc_orientation_classify",
-    "use_textline_orientation",
+_PAYLOAD_DROP_KEYS = {"img", "image", "dummy", "pixels", "raw", "page_bytes", "file_bytes", "input"}
+_MIN_PAYLOAD_KEYS = {
+    "ok",
+    "page_file",
+    "profile",
+    "stage",
+    "t_init_ms",
+    "t_predict_ms",
+    "t_page_ms",
+    "t_emit_ms",
+    "predict_flags",
 }
+_MAX_LIST_LEN = 2000
+_MAX_DICT_KEYS = 200
+_MAX_DUMP_CHARS = 200 * 1024
+_PP_OBJ_MIN_KEYS = ("overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res")
+_QUIET = False
+_JSONL_OUT_PATH = ""
 
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["FLAGS_use_mkldnn"] = "0"
@@ -29,6 +39,8 @@ os.environ["FLAGS_use_onednn"] = "0"
 os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
+os.environ["FLAGS_logtostderr"] = "1"
+os.environ["GLOG_logtostderr"] = "1"
 
 try:
     if hasattr(sys.stdout, "reconfigure"):
@@ -40,7 +52,15 @@ except Exception:
 
 
 def _stage(msg: str) -> None:
+    if _QUIET and not any(tok in msg.lower() for tok in ("error", "failed", "fatal")):
+        return
     print(f"[stage] {msg}", file=sys.stderr, flush=True)
+
+
+def _write_jsonl_line(line: str) -> None:
+    if _JSONL_OUT_PATH:
+        with open(_JSONL_OUT_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
 
 def _converter(obj: Any) -> Any:
@@ -48,7 +68,7 @@ def _converter(obj: Any) -> Any:
         import numpy as np
 
         if isinstance(obj, np.ndarray):
-            return obj.tolist()
+            return "[NDARRAY_OMITTED]"
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.floating):
@@ -67,25 +87,116 @@ def _converter(obj: Any) -> Any:
     return repr(obj)
 
 
-def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "") -> float:
+def _sanitize_value(value: Any) -> Any:
+    try:
+        import numpy as np
+
+        if isinstance(value, np.ndarray):
+            return "[NDARRAY_OMITTED]"
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.floating):
+            return float(value)
+    except Exception:
+        pass
+
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for i, (k, v) in enumerate(value.items()):
+            if i >= _MAX_DICT_KEYS:
+                out["__truncated_keys__"] = "[TRUNCATED]"
+                break
+            key = str(k)
+            if key in _PAYLOAD_DROP_KEYS:
+                continue
+            out[key] = _sanitize_value(v)
+        return out
+
+    if isinstance(value, list):
+        if len(value) > _MAX_LIST_LEN:
+            return [_sanitize_value(v) for v in value[:_MAX_LIST_LEN]] + ["[TRUNCATED]"]
+        return [_sanitize_value(v) for v in value]
+
+    if isinstance(value, tuple):
+        as_list = list(value)
+        if len(as_list) > _MAX_LIST_LEN:
+            as_list = as_list[:_MAX_LIST_LEN] + ["[TRUNCATED]"]
+        return [_sanitize_value(v) for v in as_list]
+
+    return value
+
+
+def _build_min_pp_obj(pp_obj: Any) -> Dict[str, Any]:
+    if not isinstance(pp_obj, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for key in _PP_OBJ_MIN_KEYS:
+        if key in pp_obj and pp_obj[key] is not None:
+            out[key] = _sanitize_value(pp_obj[key])
+    return out
+
+
+def _build_min_payload(payload: Dict[str, Any], fallback_page_file: str) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"page_file": payload.get("page_file", fallback_page_file)}
+    for key in _MIN_PAYLOAD_KEYS:
+        if key in payload:
+            out[key] = payload[key]
+
+    pp_obj_min = _build_min_pp_obj(payload.get("pp_obj"))
+    if pp_obj_min:
+        out["pp_obj"] = pp_obj_min
+
+    out.setdefault("stage", payload.get("stage", "predict_done"))
+    out.setdefault("profile", payload.get("profile", "fast"))
+    out.setdefault("ok", bool(payload.get("ok", False)))
+    return out
+
+
+def _truncate_heavy_top_level(payload: Dict[str, Any]) -> Dict[str, Any]:
+    compact: Dict[str, Any] = {}
+    for k, v in payload.items():
+        if isinstance(v, (list, dict, tuple)):
+            compact[k] = "[TRUNCATED]"
+        else:
+            compact[k] = v
+    return compact
+
+
+def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "", payload_mode: str = "min") -> float:
     global _LAST_EMIT_MS
     emit_start = time.perf_counter()
     try:
         payload.setdefault("page_file", fallback_page_file)
-        payload.setdefault("t_emit_ms", round(_LAST_EMIT_MS, 3))
-        print(json.dumps(payload, ensure_ascii=True, default=_converter), flush=True)
+        payload["t_emit_ms"] = round(_LAST_EMIT_MS, 3)
+        if payload_mode == "min":
+            out_payload = _build_min_payload(payload, fallback_page_file)
+            dumped = json.dumps(out_payload, ensure_ascii=True, default=_converter)
+        else:
+            out_payload = _sanitize_value(payload)
+            dumped = json.dumps(out_payload, ensure_ascii=True, default=_converter)
+            if len(dumped) > _MAX_DUMP_CHARS:
+                out_payload = _truncate_heavy_top_level(out_payload)
+                dumped = json.dumps(out_payload, ensure_ascii=True, default=_converter)
+
+        _write_jsonl_line(dumped)
+        if (not _QUIET) or (not bool(out_payload.get("ok", True))):
+            print(dumped, flush=True)
     except Exception as e:
         err_payload = {
             "ok": False,
             "stage": "emit",
-            "err": str(e),
             "page_file": payload.get("page_file", fallback_page_file),
+            "profile": payload.get("profile", "fast"),
+            "t_emit_ms": round(_LAST_EMIT_MS, 3),
         }
         try:
-            print(json.dumps(err_payload, ensure_ascii=True), flush=True)
+            dumped_err = json.dumps(_build_min_payload(err_payload, fallback_page_file), ensure_ascii=True, default=_converter)
+            _write_jsonl_line(dumped_err)
+            print(dumped_err, flush=True)
         except Exception:
-            sys.stdout.write('{"ok": false, "stage": "emit", "err": "emit failed", "page_file": "__BATCH__"}\n')
+            sys.stdout.write('{"ok": false, "stage": "emit", "page_file": "__BATCH__", "profile": "fast", "t_emit_ms": 0.0}\n')
             sys.stdout.flush()
+        _stage(f"emit_error err={e}")
     _LAST_EMIT_MS = (time.perf_counter() - emit_start) * 1000.0
     return _LAST_EMIT_MS
 
@@ -136,9 +247,10 @@ def _extract_json(first: Any) -> Any:
     return None
 
 
-def _extract_first_object_fields(first: Any) -> Dict[str, Any]:
+def _extract_first_object_fields(first: Any, keys: List[str] | None = None) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
-    for key in ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]:
+    selected_keys = keys or ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]
+    for key in selected_keys:
         try:
             value = first.get(key) if isinstance(first, dict) else getattr(first, key, None)
         except Exception:
@@ -251,6 +363,7 @@ def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
             "use_table_recognition": False,
             "use_formula_recognition": False,
             "use_chart_recognition": False,
+            "use_seal_recognition": False,
             "use_region_detection": True,
         }
     if force_region_detection in (0, 1):
@@ -272,10 +385,45 @@ def _predict_with_fallback(engine: Any, inp: Any, predict_kwargs: Dict[str, Any]
         raise
 
 
+
+def _validate_export_schema(cfg: Any, label: str) -> tuple[bool, str]:
+    if not isinstance(cfg, dict):
+        return False, f"{label}: root is not dict"
+    if "Global" in cfg:
+        return False, f"{label}: top-level Global key detected"
+    for key in ("pipeline_name", "SubModules", "SubPipelines"):
+        if key not in cfg:
+            return False, f"{label}: missing {key}"
+    if not isinstance(cfg.get("SubModules"), dict):
+        return False, f"{label}: SubModules is not dict"
+    if not isinstance(cfg.get("SubPipelines"), dict):
+        return False, f"{label}: SubPipelines is not dict"
+    return True, "ok"
+
+
+def _is_valid_full_yaml(full_yaml: Path) -> bool:
+    if not full_yaml.exists():
+        return False
+    try:
+        cfg = _load_yaml_with_fallback(full_yaml)
+    except Exception as e:
+        _stage(f"full_yaml_validate_read_failed err={e}")
+        return False
+    ok, _ = _validate_export_schema(cfg, "full_yaml")
+    return ok
+
+
 def _export_full_yaml_if_missing(full_yaml: Path) -> None:
-    if full_yaml.exists():
-        return
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    if full_yaml.exists():
+        cfg = _load_yaml_with_fallback(full_yaml)
+        ok, reason = _validate_export_schema(cfg, "full_yaml")
+        if ok:
+            return
+        _stage(f"full_yaml_invalid err={reason}")
+        raise RuntimeError(reason)
+
     try:
         from paddleocr import PPStructureV3
 
@@ -283,36 +431,176 @@ def _export_full_yaml_if_missing(full_yaml: Path) -> None:
         _stage(f"exported_full_yaml {full_yaml.name}")
     except Exception as e:
         _stage(f"export_full_yaml_skip err={e}")
+        raise
+
+    cfg2 = _load_yaml_with_fallback(full_yaml)
+    ok2, reason2 = _validate_export_schema(cfg2, "full_yaml_exported")
+    if not ok2:
+        _stage(f"full_yaml_export_invalid err={reason2}")
+        raise RuntimeError(reason2)
 
 
-def _replace_bool_line(line: str, key: str, value: bool) -> str:
-    m = re.match(rf"^(\s*){re.escape(key)}\s*:\s*(true|false|True|False)(\s*(#.*)?)$", line)
-    if not m:
-        return line
-    return f"{m.group(1)}{key}: {'true' if value else 'false'}{m.group(3) or ''}"
-
-
-def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> None:
-    if not full_yaml.exists():
-        return
+def _load_yaml_with_fallback(path: Path) -> Dict[str, Any]:
     try:
-        lines = full_yaml.read_text(encoding="utf-8", errors="replace").splitlines()
-        out = []
-        for line in lines:
-            updated = line
-            for key in _FAST_DISABLE_KEYS:
-                updated = _replace_bool_line(updated, key, False)
-            updated = _replace_bool_line(updated, "use_region_detection", True)
-            # doc_preprocessor는 끄지 않는다
-            updated = _replace_bool_line(updated, "use_doc_preprocessor", True)
-            if re.match(r"^\s*batch_size\s*:\s*\d+\s*(#.*)?$", updated):
-                lead = re.match(r"^(\s*)", updated).group(1)  # type: ignore[union-attr]
-                updated = f"{lead}batch_size: 1"
-            out.append(updated)
-        fast_yaml.write_text("\n".join(out) + "\n", encoding="utf-8")
+        import yaml  # type: ignore
+
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:
+        ruby_script = (
+            "require 'yaml'; require 'json'; "
+            "obj = YAML.safe_load(File.read(ARGV[0]), aliases: true) || {}; "
+            "puts JSON.generate(obj)"
+        )
+        proc = subprocess.run(
+            ["ruby", "-e", ruby_script, str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or "ruby yaml load failed")
+        loaded = json.loads(proc.stdout)
+        return loaded if isinstance(loaded, dict) else {}
+
+
+def _dump_yaml_with_fallback(data: Dict[str, Any], path: Path) -> None:
+    try:
+        import yaml  # type: ignore
+
+        path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=False), encoding="utf-8")
+        return
+    except Exception:
+        ruby_script = (
+            "require 'yaml'; require 'json'; "
+            "obj = JSON.parse(STDIN.read); "
+            "File.write(ARGV[0], YAML.dump(obj))"
+        )
+        proc = subprocess.run(
+            ["ruby", "-e", ruby_script, str(path)],
+            input=json.dumps(data, ensure_ascii=True),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or "ruby yaml dump failed")
+
+
+def _validate_fast_yaml_region_detection(fast_yaml: Path) -> bool:
+    try:
+        data = _load_yaml_with_fallback(fast_yaml)
+    except Exception as e:
+        _stage(f"fast_yaml_validate_read_failed err={e}")
+        return False
+
+    ok_schema, schema_reason = _validate_export_schema(data, "fast_yaml")
+    if not ok_schema:
+        _stage(f"fast_yaml_validate_schema_failed err={schema_reason}")
+        return False
+
+    submodules = data.get("SubModules")
+    region = submodules.get("RegionDetection") if isinstance(submodules, dict) else None
+    if not isinstance(region, dict):
+        _stage("fast_yaml_validate_missing RegionDetection")
+        return False
+
+    required_keys = ["model_name", "module_name", "model_dir"]
+    missing = [k for k in required_keys if k not in region]
+    if missing:
+        _stage(f"fast_yaml_validate_missing_keys {','.join(missing)}")
+        return False
+
+    if region.get("model_name") != "PP-DocBlockLayout":
+        _stage(f"fast_yaml_validate_bad_model_name got={region.get('model_name')}")
+        return False
+
+    if not region.get("module_name"):
+        _stage("fast_yaml_validate_missing module_name")
+        return False
+    return True
+
+
+def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
+    if not full_yaml.exists():
+        _stage("make_fast_yaml_skip full_yaml_missing")
+        return False
+    try:
+        data = _load_yaml_with_fallback(full_yaml)
+        ok_schema, schema_reason = _validate_export_schema(data, "full_yaml_for_fast")
+        if not ok_schema:
+            _stage(f"make_fast_yaml_skip schema_invalid err={schema_reason}")
+            return False
+
+        # Top-level fast switches.
+        data["use_table_recognition"] = False
+        data["use_formula_recognition"] = False
+        data["use_chart_recognition"] = False
+        data["use_seal_recognition"] = False
+        data["use_region_detection"] = True
+
+        # Fast tuning via value-only toggles (preserve full export structure).
+        data["batch_size"] = 1
+
+        subpipes = data.get("SubPipelines")
+        if isinstance(subpipes, dict):
+            doc_pre = subpipes.get("DocPreprocessor")
+            if isinstance(doc_pre, dict):
+                doc_pre["use_doc_orientation_classify"] = False
+                doc_pre["use_doc_unwarping"] = False
+
+            general_ocr = subpipes.get("GeneralOCR")
+            if isinstance(general_ocr, dict):
+                general_ocr["use_textline_orientation"] = False
+                g_sub = general_ocr.get("SubModules")
+                if isinstance(g_sub, dict):
+                    text_det = g_sub.get("TextDetection")
+                    if isinstance(text_det, dict):
+                        if "limit_side_len" in text_det:
+                            text_det["limit_side_len"] = 512
+                        text_det["limit_type"] = "min"
+                        text_det["max_side_limit"] = 2000
+
+        _dump_yaml_with_fallback(data, fast_yaml)
+        if not _validate_fast_yaml_region_detection(fast_yaml):
+            _stage("make_fast_yaml_skip validation_failed")
+            region = data.get("SubModules", {}).get("RegionDetection") if isinstance(data.get("SubModules"), dict) else {}
+            if isinstance(region, dict):
+                _stage(f"fast_yaml_region_keys keys={list(region.keys())}")
+            _delete_fast_yaml(fast_yaml, "validation_failed")
+            return False
+
+        # Immediate load validation for generated fast yaml.
+        try:
+            from paddleocr import PPStructureV3
+
+            PPStructureV3(paddlex_config=str(fast_yaml))
+        except Exception as e:
+            region = data.get("SubModules", {}).get("RegionDetection") if isinstance(data.get("SubModules"), dict) else {}
+            if isinstance(region, dict):
+                _stage(f"fast_yaml_region_keys keys={list(region.keys())}")
+            _stage(f"fast_yaml_post_generate_load_failed err={e}")
+            _delete_fast_yaml(fast_yaml, "post_generate_load_failed")
+            return False
+
         _stage(f"generated_fast_yaml {fast_yaml.name}")
+        return True
     except Exception as e:
         _stage(f"make_fast_yaml_skip err={e}")
+        return False
+
+
+def _delete_fast_yaml(fast_cfg: Path, reason: str) -> None:
+    try:
+        if not fast_cfg.exists():
+            return
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        safe_reason = re.sub(r"[^A-Za-z0-9_-]+", "_", reason).strip("_") or "unknown"
+        bad = fast_cfg.with_name(f"PP-StructureV3_fast.bad.{safe_reason}.{ts}.yaml")
+        fast_cfg.rename(bad)
+        _stage(f"fast_yaml_preserved_bad file={bad.name}")
+    except Exception as e:
+        _stage(f"fast_yaml_preserve_failed reason={reason} err={e}")
 
 
 def _load_engine(profile: str) -> Any:
@@ -321,18 +609,50 @@ def _load_engine(profile: str) -> Any:
     full_cfg = CONFIG_DIR / "PP-StructureV3_full.yaml"
     fast_cfg = CONFIG_DIR / "PP-StructureV3_fast.yaml"
 
-    if profile == "fast" and not fast_cfg.exists():
-        _export_full_yaml_if_missing(full_cfg)
-        _make_fast_yaml_from_full(full_cfg, fast_cfg)
+    if profile == "fast":
+        if not fast_cfg.exists():
+            _stage("fast_yaml_missing regenerate")
+            _export_full_yaml_if_missing(full_cfg)
+            if not _make_fast_yaml_from_full(full_cfg, fast_cfg):
+                _stage("fast_yaml_generate_failed retry_once")
+                _delete_fast_yaml(fast_cfg, "generate_failed_first")
+                if not _make_fast_yaml_from_full(full_cfg, fast_cfg):
+                    raise RuntimeError("fast_yaml_generate_failed")
+
+        if not _validate_fast_yaml_region_detection(fast_cfg):
+            _delete_fast_yaml(fast_cfg, "region_validation_failed")
+            raise RuntimeError("fast_yaml_invalid_region_detection")
+
+        try:
+            return PPStructureV3(paddlex_config=str(fast_cfg))
+        except Exception as e:
+            _stage(f"fast_yaml_load_failed err={e}")
+            _delete_fast_yaml(fast_cfg, "load_failed")
+
+            _stage("fast_yaml_recover regenerate_and_retry")
+            _export_full_yaml_if_missing(full_cfg)
+            if not _make_fast_yaml_from_full(full_cfg, fast_cfg):
+                _stage("fast_yaml_recover_generate_failed retry_once")
+                _delete_fast_yaml(fast_cfg, "recover_generate_failed_first")
+                if not _make_fast_yaml_from_full(full_cfg, fast_cfg):
+                    raise RuntimeError("fast_yaml_recover_generate_failed") from e
+            if not _validate_fast_yaml_region_detection(fast_cfg):
+                _delete_fast_yaml(fast_cfg, "recover_region_validation_failed")
+                raise RuntimeError("fast_yaml_recover_invalid_region_detection") from e
+
+            try:
+                _stage("fast_yaml_recover_retry")
+                return PPStructureV3(paddlex_config=str(fast_cfg))
+            except Exception as retry_err:
+                _stage(f"fast_yaml_recover_retry_failed err={retry_err}")
+                _delete_fast_yaml(fast_cfg, "recover_retry_load_failed")
+                raise RuntimeError(f"fast_init_failed: {retry_err}") from retry_err
+
     elif profile == "full" and not full_cfg.exists():
         _export_full_yaml_if_missing(full_cfg)
 
-    if profile == "fast":
-        if fast_cfg.exists():
-            return PPStructureV3(paddlex_config=str(fast_cfg))
-    if profile == "full":
-        if full_cfg.exists():
-            return PPStructureV3(paddlex_config=str(full_cfg))
+    if profile == "full" and full_cfg.exists():
+        return PPStructureV3(paddlex_config=str(full_cfg))
     return PPStructureV3()
 
 
@@ -350,10 +670,10 @@ def _warmup_once(engine: Any, enabled: bool, profile: str, force_region_detectio
         _stage(f"warmup_skip err={e}")
 
 
-
-def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, force_region_detection: int, payload_mode: str) -> Dict[str, Any]:
+def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, force_region_detection: int) -> Dict[str, Any]:
     page_name = page_path.name
     page_start = time.perf_counter()
+    flags = _predict_flags(profile, force_region_detection)
     try:
         import cv2
         import numpy as np
@@ -369,10 +689,10 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
                 "t_init_ms": round(t_init_ms, 3),
                 "t_predict_ms": round(t_page_ms, 3),
                 "t_page_ms": round(t_page_ms, 3),
+                "predict_flags": flags,
             }
 
         predict_start = time.perf_counter()
-        flags = _predict_flags(profile, force_region_detection)
         try:
             output = _predict_with_fallback(engine, raw, flags)
         except Exception:
@@ -391,30 +711,29 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
                 "t_init_ms": round(t_init_ms, 3),
                 "t_predict_ms": round(t_predict_ms, 3),
                 "t_page_ms": round(t_page_ms, 3),
+                "predict_flags": flags,
             }
 
         pp_obj = _extract_first_object_fields(first)
+        pp_obj_min = _extract_first_object_fields(
+            first,
+            keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
+        )
         anchors, objects = _extract_min_entities(pp_json, pp_obj)
-        base_payload = {
+        payload = {
             "ok": True,
             "page_file": page_name,
+            "stage": "predict_done",
             "anchors": anchors,
             "objects": objects,
-            "pp_meta": {
-                "profile": profile,
-                "predict_flags": flags,
-                "t_init_ms": round(t_init_ms, 3),
-                "t_predict_ms": round(t_predict_ms, 3),
-                "payload_mode": payload_mode,
-            },
             "t_init_ms": round(t_init_ms, 3),
             "t_predict_ms": round(t_predict_ms, 3),
             "t_page_ms": round(t_page_ms, 3),
+            "predict_flags": flags,
         }
-        if payload_mode == "full":
-            base_payload["pp_json"] = pp_json
-            base_payload["pp_obj"] = pp_obj
-        return base_payload
+        if pp_obj_min:
+            payload["pp_obj"] = pp_obj_min
+        return payload
     except Exception as e:
         t_page_ms = (time.perf_counter() - page_start) * 1000.0
         return {
@@ -425,18 +744,19 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             "t_init_ms": round(t_init_ms, 3),
             "t_predict_ms": round(t_page_ms, 3),
             "t_page_ms": round(t_page_ms, 3),
+            "predict_flags": flags,
         }
 
 
 def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_detection: int, payload_mode: str) -> int:
     if not pages_dir.exists() or not pages_dir.is_dir():
-        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": f"invalid pages_dir: {pages_dir}"})
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": f"invalid pages_dir: {pages_dir}", "profile": profile}, payload_mode=payload_mode)
         return 1
 
     page_files = _sorted_page_files(pages_dir)
     _stage(f"start pages={len(page_files)} profile={profile}")
     if not page_files:
-        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "load_pages", "err": "no P*.png files"})
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "load_pages", "err": "no P*.png files", "profile": profile}, payload_mode=payload_mode)
         return 1
 
     init_start = time.perf_counter()
@@ -445,7 +765,7 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
         t_init_ms = (time.perf_counter() - init_start) * 1000.0
         _stage(f"init_ok t_init_ms={t_init_ms:.1f}")
     except Exception as e:
-        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "init_engine", "err": str(e), "profile": profile})
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "init_engine", "err": str(e), "profile": profile}, payload_mode=payload_mode)
         return 1
 
     _warmup_once(engine, warmup, profile, force_region_detection)
@@ -457,10 +777,9 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
             t_init_ms=t_init_ms,
             profile=profile,
             force_region_detection=force_region_detection,
-            payload_mode=payload_mode,
         )
-        payload.setdefault("profile", profile)
-        t_emit_ms = _emit_json(payload, fallback_page_file=page_path.name)
+        payload["profile"] = profile
+        t_emit_ms = _emit_json(payload, fallback_page_file=page_path.name, payload_mode=payload_mode)
         _stage(
             f"predict_done {page_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
             f"t_predict_ms={float(payload.get('t_predict_ms', 0.0)):.1f} t_emit_ms={t_emit_ms:.1f} "
@@ -472,7 +791,7 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
 
 def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_detection: int, payload_mode: str) -> int:
     if not image_path.exists() or not image_path.is_file():
-        _emit_json({"ok": False, "page_file": image_path.name, "stage": "args", "err": f"invalid image_path: {image_path}"})
+        _emit_json({"ok": False, "page_file": image_path.name, "stage": "args", "err": f"invalid image_path: {image_path}", "profile": profile}, payload_mode=payload_mode)
         return 1
 
     init_start = time.perf_counter()
@@ -481,7 +800,7 @@ def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_
         t_init_ms = (time.perf_counter() - init_start) * 1000.0
         _stage(f"init_ok(single) t_init_ms={t_init_ms:.1f}")
     except Exception as e:
-        _emit_json({"ok": False, "page_file": image_path.name, "stage": "init_engine", "err": str(e), "profile": profile})
+        _emit_json({"ok": False, "page_file": image_path.name, "stage": "init_engine", "err": str(e), "profile": profile}, payload_mode=payload_mode)
         return 1
 
     _warmup_once(engine, warmup, profile, force_region_detection)
@@ -491,9 +810,9 @@ def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_
         t_init_ms=t_init_ms,
         profile=profile,
         force_region_detection=force_region_detection,
-        payload_mode=payload_mode,
     )
-    t_emit_ms = _emit_json(payload, fallback_page_file=image_path.name)
+    payload["profile"] = profile
+    t_emit_ms = _emit_json(payload, fallback_page_file=image_path.name, payload_mode=payload_mode)
     _stage(
         f"predict_done {image_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
         f"t_predict_ms={float(payload.get('t_predict_ms', 0.0)):.1f} t_emit_ms={t_emit_ms:.1f} "
@@ -506,12 +825,18 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("image_path", nargs="?", help="single image path (e.g., P001.png)")
     parser.add_argument("--pages_dir", required=False, help="directory containing P*.png files (batch mode)")
-    parser.add_argument("--dpi", type=int, default=250, help="reserved")
+    parser.add_argument("--dpi", type=int, default=180, help="PDF render hint; ignored for direct image input")
     parser.add_argument("--warmup", type=int, choices=[0, 1], default=1)
     parser.add_argument("--profile", choices=["fast", "full"], default="fast")
     parser.add_argument("--force_region_detection", type=int, choices=[-1, 0, 1], default=-1)
     parser.add_argument("--payload", choices=["min", "full"], default="min")
+    parser.add_argument("--quiet", type=int, choices=[0, 1], default=0, help="reduce stdout/stderr logging")
+    parser.add_argument("--jsonl_out", default="", help="optional JSONL file path for payload output")
     args = parser.parse_args()
+
+    global _QUIET, _JSONL_OUT_PATH
+    _QUIET = bool(args.quiet)
+    _JSONL_OUT_PATH = args.jsonl_out
 
     if args.pages_dir:
         return run_pages_dir(
@@ -530,7 +855,7 @@ def main() -> int:
             payload_mode=args.payload,
         )
 
-    _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": "usage: v3_isolation_runner.py (--pages_dir DIR) | (image_path)"})
+    _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": "usage: v3_isolation_runner.py (--pages_dir DIR) | (image_path)", "profile": args.profile}, payload_mode=args.payload)
     return 1
 
 
