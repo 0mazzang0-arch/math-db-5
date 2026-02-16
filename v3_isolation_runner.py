@@ -29,6 +29,8 @@ _MIN_PAYLOAD_KEYS = {
 _MAX_LIST_LEN = 2000
 _MAX_DICT_KEYS = 200
 _MAX_DUMP_CHARS = 200 * 1024
+_QUIET = False
+_JSONL_OUT_PATH = ""
 
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["FLAGS_use_mkldnn"] = "0"
@@ -49,7 +51,15 @@ except Exception:
 
 
 def _stage(msg: str) -> None:
+    if _QUIET and not any(tok in msg.lower() for tok in ("error", "failed", "fatal")):
+        return
     print(f"[stage] {msg}", file=sys.stderr, flush=True)
+
+
+def _write_jsonl_line(line: str) -> None:
+    if _JSONL_OUT_PATH:
+        with open(_JSONL_OUT_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
 
 def _converter(obj: Any) -> Any:
@@ -144,13 +154,16 @@ def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "", payload_mo
         payload["t_emit_ms"] = round(_LAST_EMIT_MS, 3)
         if payload_mode == "min":
             out_payload = _build_min_payload(payload, fallback_page_file)
-            print(json.dumps(out_payload, ensure_ascii=True, default=_converter), flush=True)
+            dumped = json.dumps(out_payload, ensure_ascii=True, default=_converter)
         else:
             out_payload = _sanitize_value(payload)
             dumped = json.dumps(out_payload, ensure_ascii=True, default=_converter)
             if len(dumped) > _MAX_DUMP_CHARS:
                 out_payload = _truncate_heavy_top_level(out_payload)
                 dumped = json.dumps(out_payload, ensure_ascii=True, default=_converter)
+
+        _write_jsonl_line(dumped)
+        if (not _QUIET) or (not bool(out_payload.get("ok", True))):
             print(dumped, flush=True)
     except Exception as e:
         err_payload = {
@@ -161,7 +174,9 @@ def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "", payload_mo
             "t_emit_ms": round(_LAST_EMIT_MS, 3),
         }
         try:
-            print(json.dumps(_build_min_payload(err_payload, fallback_page_file), ensure_ascii=True, default=_converter), flush=True)
+            dumped_err = json.dumps(_build_min_payload(err_payload, fallback_page_file), ensure_ascii=True, default=_converter)
+            _write_jsonl_line(dumped_err)
+            print(dumped_err, flush=True)
         except Exception:
             sys.stdout.write('{"ok": false, "stage": "emit", "page_file": "__BATCH__", "profile": "fast", "t_emit_ms": 0.0}\n')
             sys.stdout.flush()
@@ -408,6 +423,11 @@ def _export_full_yaml_if_missing(full_yaml: Path) -> None:
         _stage(f"full_yaml_export_invalid err={reason2}")
         raise RuntimeError(reason2)
 
+    cfg2 = _load_yaml_with_fallback(full_yaml)
+    ok2, reason2 = _validate_export_schema(cfg2, "full_yaml_exported")
+    if not ok2:
+        _stage(f"full_yaml_export_invalid err={reason2}")
+        raise RuntimeError(reason2)
 
 def _load_yaml_with_fallback(path: Path) -> Dict[str, Any]:
     try:
@@ -805,7 +825,13 @@ def main() -> int:
     parser.add_argument("--profile", choices=["fast", "full"], default="fast")
     parser.add_argument("--force_region_detection", type=int, choices=[-1, 0, 1], default=-1)
     parser.add_argument("--payload", choices=["min", "full"], default="min")
+    parser.add_argument("--quiet", type=int, choices=[0, 1], default=0, help="reduce stdout/stderr logging")
+    parser.add_argument("--jsonl_out", default="", help="optional JSONL file path for payload output")
     args = parser.parse_args()
+
+    global _QUIET, _JSONL_OUT_PATH
+    _QUIET = bool(args.quiet)
+    _JSONL_OUT_PATH = args.jsonl_out
 
     if args.pages_dir:
         return run_pages_dir(
