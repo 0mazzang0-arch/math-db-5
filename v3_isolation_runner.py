@@ -521,6 +521,10 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             }
 
         pp_obj = _extract_first_object_fields(first)
+        pp_obj_min = _extract_first_object_fields(
+            first,
+            keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
+        )
         anchors, objects = _extract_min_entities(pp_json, pp_obj)
         return {
             "ok": True,
