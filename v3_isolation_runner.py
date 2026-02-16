@@ -315,12 +315,44 @@ def _iter_dicts(obj: Any):
 
 def _extract_bbox(node: Dict[str, Any]) -> List[int]:
     cand = node.get("bbox") or node.get("box") or node.get("rect")
+    if hasattr(cand, "tolist"):
+        try:
+            cand = cand.tolist()
+        except Exception:
+            pass
     if isinstance(cand, (list, tuple)) and len(cand) == 4:
-        return [int(float(cand[0])), int(float(cand[1])), int(float(cand[2])), int(float(cand[3]))]
+        try:
+            return [int(float(cand[0])), int(float(cand[1])), int(float(cand[2])), int(float(cand[3]))]
+        except Exception:
+            pass
+
     poly = node.get("poly") or node.get("polygon") or node.get("points")
+    if hasattr(poly, "tolist"):
+        try:
+            poly = poly.tolist()
+        except Exception:
+            pass
     if isinstance(poly, (list, tuple)) and len(poly) >= 4:
+        # flatten form: [x1,y1,x2,y2,...]
+        if all(not isinstance(it, (list, tuple)) for it in poly):
+            nums = []
+            for it in poly:
+                try:
+                    nums.append(float(it))
+                except Exception:
+                    pass
+            if len(nums) >= 8:
+                xs = nums[0::2]
+                ys = nums[1::2]
+                return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+
         pts = []
         for p in poly:
+            if hasattr(p, "tolist"):
+                try:
+                    p = p.tolist()
+                except Exception:
+                    pass
             if isinstance(p, (list, tuple)) and len(p) >= 2:
                 try:
                     pts.append((float(p[0]), float(p[1])))
@@ -363,7 +395,29 @@ def _iter_ocr_items(obj: Any):
         text = _extract_text(obj)
         if text:
             yield text, _extract_bbox(obj)
-        for v in obj.values():
+
+        # Parallel OCR arrays: polys + texts
+        polys = obj.get("dt_polys") or obj.get("polys") or obj.get("boxes")
+        texts = obj.get("rec_text") or obj.get("texts") or obj.get("text")
+        if hasattr(polys, "tolist"):
+            try:
+                polys = polys.tolist()
+            except Exception:
+                pass
+        if hasattr(texts, "tolist"):
+            try:
+                texts = texts.tolist()
+            except Exception:
+                pass
+        if isinstance(polys, (list, tuple)) and isinstance(texts, (list, tuple)) and polys and texts:
+            for poly, txt in zip(polys, texts):
+                if isinstance(txt, str) and txt.strip():
+                    yield txt, _poly_to_bbox(poly)
+
+        skip_keys = {"dt_polys", "polys", "boxes", "rec_text", "texts", "text"}
+        for k, v in obj.items():
+            if k in skip_keys:
+                continue
             yield from _iter_ocr_items(v)
         return
 
@@ -453,6 +507,18 @@ def _build_fragment_anchors(fragments: List[Dict[str, Any]]) -> Tuple[List[Dict[
         if not parts:
             continue
         joined = "".join(parts)
+        if 1 <= len(joined) <= 3:
+            z = joined.zfill(4)
+            n_val = int(z)
+            if 1 <= n_val <= 9999:
+                xs1=[b["bbox"][0] for b in line]; ys1=[b["bbox"][1] for b in line]
+                xs2=[b["bbox"][2] for b in line]; ys2=[b["bbox"][3] for b in line]
+                bbox=[min(xs1), min(ys1), max(xs2), max(ys2)]
+                made.append({"id": z, "text": z, "n": n_val, "bbox": bbox, "col": 0})
+                if not dbg_parts:
+                    dbg_parts = parts[:]
+                    dbg_joined = z
+            continue
         if len(joined) < 4:
             continue
 
@@ -488,7 +554,7 @@ def _build_fragment_anchors(fragments: List[Dict[str, Any]]) -> Tuple[List[Dict[
     return made, dbg_parts[:5], dbg_joined
 
 
-def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, List[str], List[str], str]:
+def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, int, int, List[str], List[str], str]:
     anchors: List[Dict[str, Any]] = []
     objects: List[Dict[str, Any]] = []
     seen_anchor = set()
@@ -498,6 +564,8 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
     candidate_samples: List[str] = []
     seen_sample = set()
     digit_fragments: List[Dict[str, Any]] = []
+    bbox_item_count = 0
+    seen_candidate = set()
 
     ocr_sources: List[Any] = []
     bbox_sources: List[Any] = []
@@ -530,8 +598,14 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                     seen_sample.add(text)
                     candidate_samples.append(text)
 
+            cand_key = (text, tuple(bbox) if bbox else ())
+            if cand_key in seen_candidate:
+                continue
+            seen_candidate.add(cand_key)
+
             if not bbox:
                 continue
+            bbox_item_count += 1
 
             if 1 <= len(digits) <= 3:
                 yc = (bbox[1] + bbox[3]) / 2.0
@@ -570,7 +644,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
             anchors.append(a)
 
     anchors.sort(key=lambda a: (a.get("bbox", [0, 0, 0, 0])[1], a.get("bbox", [0, 0, 0, 0])[0]))
-    return anchors, objects, candidate_text_count, digit_candidate_count, candidate_samples, frag_parts, frag_joined
+    return anchors, objects, candidate_text_count, digit_candidate_count, len(digit_fragments), bbox_item_count, candidate_samples, frag_parts, frag_joined
 
 
 def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
@@ -936,7 +1010,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             first,
             keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
         )
-        anchors, objects, candidate_count, digit_candidate_count, candidate_samples, frag_parts, frag_joined = _extract_min_entities(pp_json, pp_obj)
+        anchors, objects, candidate_count, digit_candidate_count, frag_count, bbox_item_count, candidate_samples, frag_parts, frag_joined = _extract_min_entities(pp_json, pp_obj)
         payload = {
             "ok": True,
             "page_file": page_name,
@@ -951,7 +1025,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
         if pp_obj:
             payload["pp_obj"] = pp_obj
         print(
-            f"[debug] {page_name} candidates={candidate_count} digit_candidates={digit_candidate_count} matches={len(anchors)} "
+            f"[debug] {page_name} candidates={candidate_count} digit_candidates={digit_candidate_count} frag_count={frag_count} bbox_items={bbox_item_count} matches={len(anchors)} "
             f"sample_texts={json.dumps(candidate_samples, ensure_ascii=True)} "
             f"parts={json.dumps(frag_parts, ensure_ascii=True)} joined={json.dumps(frag_joined, ensure_ascii=True)}",
             file=sys.stderr,
