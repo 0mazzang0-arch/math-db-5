@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import time
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -13,15 +14,24 @@ _LAST_EMIT_MS = 0.0
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "configs"
 _ANCHOR_RE = re.compile(r"^\s*([A-C])\s*([0-9]{1,3})?\s*$")
-_FAST_DISABLE_KEYS = {
-    "use_table_recognition",
-    "use_formula_recognition",
-    "use_chart_recognition",
-    "use_seal_recognition",
-    "use_doc_unwarping",
-    "use_doc_orientation_classify",
-    "use_textline_orientation",
+_PAYLOAD_DROP_KEYS = {"img", "image", "dummy", "pixels", "raw", "page_bytes", "file_bytes", "input"}
+_PAYLOAD_BASE_KEYS = {
+    "ok",
+    "page_file",
+    "stage",
+    "t_init_ms",
+    "t_predict_ms",
+    "t_page_ms",
+    "t_emit_ms",
+    "profile",
+    "predict_flags",
+    "err",
+    "pp_obj",
 }
+_MAX_LIST_LEN = 5000
+_MAX_ANCHORS = 200
+_MAX_OBJECTS = 200
+_PP_OBJ_ALLOWED_KEYS = {"overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"}
 
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["FLAGS_use_mkldnn"] = "0"
@@ -48,7 +58,7 @@ def _converter(obj: Any) -> Any:
         import numpy as np
 
         if isinstance(obj, np.ndarray):
-            return obj.tolist()
+            return "[NDARRAY_OMITTED]"
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.floating):
@@ -67,24 +77,112 @@ def _converter(obj: Any) -> Any:
     return repr(obj)
 
 
+def _sanitize_value(value: Any) -> Any:
+    try:
+        import numpy as np
+
+        if isinstance(value, np.ndarray):
+            return "[NDARRAY_OMITTED]"
+    except Exception:
+        pass
+
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for k, v in value.items():
+            key = str(k)
+            if key in _PAYLOAD_DROP_KEYS:
+                continue
+            if isinstance(v, list) and len(v) > _MAX_LIST_LEN:
+                out[key] = "[TRUNCATED]"
+                continue
+            out[key] = _sanitize_value(v)
+        return out
+
+    if isinstance(value, list):
+        if len(value) > _MAX_LIST_LEN:
+            return "[TRUNCATED]"
+        return [_sanitize_value(v) for v in value]
+
+    if isinstance(value, tuple):
+        return [_sanitize_value(v) for v in value]
+
+    return value
+
+
+
+def _sanitize_pp_obj_value(value: Any) -> Any:
+    try:
+        import numpy as np
+
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        elif isinstance(value, np.integer):
+            return int(value)
+        elif isinstance(value, np.floating):
+            return float(value)
+    except Exception:
+        pass
+
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for k, v in value.items():
+            key = str(k)
+            if key in _PAYLOAD_DROP_KEYS:
+                continue
+            out[key] = _sanitize_pp_obj_value(v)
+        return out
+
+    if isinstance(value, list):
+        if len(value) > _MAX_LIST_LEN:
+            return "[TRUNCATED]"
+        return [_sanitize_pp_obj_value(v) for v in value]
+
+    if isinstance(value, tuple):
+        return [_sanitize_pp_obj_value(v) for v in value]
+
+    return value
+
+def _sanitize_payload_for_emit(payload: Dict[str, Any]) -> Dict[str, Any]:
+    compact: Dict[str, Any] = {}
+    for key in _PAYLOAD_BASE_KEYS:
+        if key in payload:
+            compact[key] = payload[key]
+
+    anchors = payload.get("anchors")
+    if isinstance(anchors, list) and anchors:
+        compact["anchors"] = anchors[:_MAX_ANCHORS]
+
+    objects = payload.get("objects")
+    if isinstance(objects, list) and objects:
+        compact["objects"] = objects[:_MAX_OBJECTS]
+
+    pp_obj = payload.get("pp_obj")
+    if isinstance(pp_obj, dict) and pp_obj:
+        compact["pp_obj"] = _sanitize_pp_obj_value({k: pp_obj[k] for k in _PP_OBJ_ALLOWED_KEYS if k in pp_obj})
+
+    return _sanitize_value(compact)
+
+
 def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "") -> float:
     global _LAST_EMIT_MS
     emit_start = time.perf_counter()
     try:
         payload.setdefault("page_file", fallback_page_file)
-        payload.setdefault("t_emit_ms", round(_LAST_EMIT_MS, 3))
-        print(json.dumps(payload, ensure_ascii=True, default=_converter), flush=True)
+        payload["t_emit_ms"] = round(_LAST_EMIT_MS, 3)
+        sanitized_payload = _sanitize_payload_for_emit(payload)
+        print(json.dumps(sanitized_payload, ensure_ascii=True, default=_converter), flush=True)
     except Exception as e:
         err_payload = {
             "ok": False,
             "stage": "emit",
             "err": str(e),
             "page_file": payload.get("page_file", fallback_page_file),
+            "t_emit_ms": round(_LAST_EMIT_MS, 3),
         }
         try:
-            print(json.dumps(err_payload, ensure_ascii=True), flush=True)
+            print(json.dumps(_sanitize_payload_for_emit(err_payload), ensure_ascii=True, default=_converter), flush=True)
         except Exception:
-            sys.stdout.write('{"ok": false, "stage": "emit", "err": "emit failed", "page_file": "__BATCH__"}\n')
+            sys.stdout.write('{"ok": false, "stage": "emit", "err": "emit failed", "page_file": "__BATCH__", "t_emit_ms": 0.0}\n')
             sys.stdout.flush()
     _LAST_EMIT_MS = (time.perf_counter() - emit_start) * 1000.0
     return _LAST_EMIT_MS
@@ -136,9 +234,10 @@ def _extract_json(first: Any) -> Any:
     return None
 
 
-def _extract_first_object_fields(first: Any) -> Dict[str, Any]:
+def _extract_first_object_fields(first: Any, keys: List[str] | None = None) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
-    for key in ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]:
+    selected_keys = keys or ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]
+    for key in selected_keys:
         try:
             value = first.get(key) if isinstance(first, dict) else getattr(first, key, None)
         except Exception:
@@ -251,6 +350,7 @@ def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
             "use_table_recognition": False,
             "use_formula_recognition": False,
             "use_chart_recognition": False,
+            "use_seal_recognition": False,
             "use_region_detection": True,
         }
     if force_region_detection in (0, 1):
@@ -285,34 +385,162 @@ def _export_full_yaml_if_missing(full_yaml: Path) -> None:
         _stage(f"export_full_yaml_skip err={e}")
 
 
-def _replace_bool_line(line: str, key: str, value: bool) -> str:
-    m = re.match(rf"^(\s*){re.escape(key)}\s*:\s*(true|false|True|False)(\s*(#.*)?)$", line)
-    if not m:
-        return line
-    return f"{m.group(1)}{key}: {'true' if value else 'false'}{m.group(3) or ''}"
-
-
-def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> None:
-    if not full_yaml.exists():
-        return
+def _load_yaml_with_fallback(path: Path) -> Dict[str, Any]:
     try:
-        lines = full_yaml.read_text(encoding="utf-8", errors="replace").splitlines()
-        out = []
-        for line in lines:
-            updated = line
-            for key in _FAST_DISABLE_KEYS:
-                updated = _replace_bool_line(updated, key, False)
-            updated = _replace_bool_line(updated, "use_region_detection", True)
-            # doc_preprocessor는 끄지 않는다
-            updated = _replace_bool_line(updated, "use_doc_preprocessor", True)
-            if re.match(r"^\s*batch_size\s*:\s*\d+\s*(#.*)?$", updated):
-                lead = re.match(r"^(\s*)", updated).group(1)  # type: ignore[union-attr]
-                updated = f"{lead}batch_size: 1"
-            out.append(updated)
-        fast_yaml.write_text("\n".join(out) + "\n", encoding="utf-8")
+        import yaml  # type: ignore
+
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:
+        ruby_script = (
+            "require 'yaml'; require 'json'; "
+            "obj = YAML.safe_load(File.read(ARGV[0]), aliases: true) || {}; "
+            "puts JSON.generate(obj)"
+        )
+        proc = subprocess.run(
+            ["ruby", "-e", ruby_script, str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or "ruby yaml load failed")
+        loaded = json.loads(proc.stdout)
+        return loaded if isinstance(loaded, dict) else {}
+
+
+def _dump_yaml_with_fallback(data: Dict[str, Any], path: Path) -> None:
+    try:
+        import yaml  # type: ignore
+
+        path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=False), encoding="utf-8")
+        return
+    except Exception:
+        ruby_script = (
+            "require 'yaml'; require 'json'; "
+            "obj = JSON.parse(STDIN.read); "
+            "File.write(ARGV[0], YAML.dump(obj))"
+        )
+        proc = subprocess.run(
+            ["ruby", "-e", ruby_script, str(path)],
+            input=json.dumps(data, ensure_ascii=True),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or "ruby yaml dump failed")
+
+
+def _validate_fast_yaml_region_detection(fast_yaml: Path) -> bool:
+    try:
+        data = _load_yaml_with_fallback(fast_yaml)
+    except Exception as e:
+        _stage(f"fast_yaml_validate_read_failed err={e}")
+        return False
+
+    submodules = data.get("SubModules") if isinstance(data, dict) else None
+    region = submodules.get("RegionDetection") if isinstance(submodules, dict) else None
+    if not isinstance(region, dict):
+        _stage("fast_yaml_validate_missing RegionDetection")
+        return False
+
+    required_keys = ["model_name", "module_name", "model_dir"]
+    missing = [k for k in required_keys if k not in region]
+    if missing:
+        _stage(f"fast_yaml_validate_missing_keys {','.join(missing)}")
+        return False
+    return True
+
+
+def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
+    if not full_yaml.exists():
+        _stage("make_fast_yaml_skip full_yaml_missing")
+        return False
+    try:
+        data = _load_yaml_with_fallback(full_yaml)
+        if not isinstance(data, dict) or not data:
+            _stage("make_fast_yaml_skip full_yaml_invalid")
+            return False
+
+        data["use_table_recognition"] = False
+        data["use_formula_recognition"] = False
+        data["use_chart_recognition"] = False
+        data["use_seal_recognition"] = False
+        data["use_region_detection"] = True
+
+        submodules = data.get("SubModules") if isinstance(data.get("SubModules"), dict) else None
+        if isinstance(submodules, dict):
+            submodules.pop("ChartRecognition", None)
+
+        subpipelines = data.get("SubPipelines") if isinstance(data.get("SubPipelines"), dict) else None
+        if isinstance(subpipelines, dict):
+            for key in ["ChartRecognition", "FormulaRecognition", "TableRecognition", "SealRecognition"]:
+                subpipelines.pop(key, None)
+            doc_prep = subpipelines.get("DocPreprocessor")
+            if isinstance(doc_prep, dict):
+                if "use_doc_orientation_classify" in doc_prep:
+                    doc_prep["use_doc_orientation_classify"] = False
+                if "use_doc_unwarping" in doc_prep:
+                    doc_prep["use_doc_unwarping"] = False
+
+        _dump_yaml_with_fallback(data, fast_yaml)
+        if not _validate_fast_yaml_region_detection(fast_yaml):
+            _stage("make_fast_yaml_skip validation_failed")
+            return False
+
         _stage(f"generated_fast_yaml {fast_yaml.name}")
+        return True
     except Exception as e:
         _stage(f"make_fast_yaml_skip err={e}")
+        return False
+
+
+def _sanitize_fast_yaml_doc_preprocessor(fast_cfg: Path) -> bool:
+    if not fast_cfg.exists():
+        return False
+    try:
+        lines = fast_cfg.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception as e:
+        _stage(f"fast_yaml_read_failed err={e}")
+        return False
+
+    changed = False
+    out: List[str] = []
+    for line in lines:
+        if re.match(r"^use_doc_preprocessor:\s*(true|True)\s*$", line):
+            out.append("use_doc_preprocessor: false")
+            changed = True
+            continue
+        out.append(line)
+
+    if changed:
+        try:
+            fast_cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
+            _stage("fast_yaml_sanity_fixed use_doc_preprocessor=false")
+        except Exception as e:
+            _stage(f"fast_yaml_sanity_write_failed err={e}")
+            return False
+    return changed
+
+
+def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> None:
+    _stage(f"fast_init_failed err={init_err}")
+    removed = False
+    try:
+        if fast_cfg.exists():
+            fast_cfg.unlink()
+            removed = True
+    except Exception as e:
+        _stage(f"fast_yaml_remove_failed err={e}")
+    else:
+        _stage(f"fast_yaml_removed={removed}")
+
+    _export_full_yaml_if_missing(full_cfg)
+    made = _make_fast_yaml_from_full(full_cfg, fast_cfg)
+    if made:
+        _sanitize_fast_yaml_doc_preprocessor(fast_cfg)
+    _stage(f"fast_yaml_regenerated exists={fast_cfg.exists()}")
 
 
 def _load_engine(profile: str) -> Any:
@@ -321,18 +549,41 @@ def _load_engine(profile: str) -> Any:
     full_cfg = CONFIG_DIR / "PP-StructureV3_full.yaml"
     fast_cfg = CONFIG_DIR / "PP-StructureV3_fast.yaml"
 
-    if profile == "fast" and not fast_cfg.exists():
+    if profile == "fast":
+        if not fast_cfg.exists():
+            _stage("fast_yaml_missing regenerate")
+            _export_full_yaml_if_missing(full_cfg)
+            created = _make_fast_yaml_from_full(full_cfg, fast_cfg)
+            if not created:
+                _stage("fast_yaml_generate_failed fallback_full")
+
+        if fast_cfg.exists():
+            _sanitize_fast_yaml_doc_preprocessor(fast_cfg)
+            if not _validate_fast_yaml_region_detection(fast_cfg):
+                _stage("fast_yaml_invalid fallback_full")
+            else:
+                try:
+                    return PPStructureV3(paddlex_config=str(fast_cfg))
+                except Exception as e:
+                    err_msg = str(e)
+                    if "block_region_detection_model" not in err_msg and "doc_preprocessor_pipeline" not in err_msg:
+                        raise
+                    _recover_fast_yaml(full_cfg, fast_cfg, e)
+                    _stage("fast_init_retry")
+                    if fast_cfg.exists() and _validate_fast_yaml_region_detection(fast_cfg):
+                        return PPStructureV3(paddlex_config=str(fast_cfg))
+                    _stage("fast_yaml_retry_invalid fallback_full")
+
         _export_full_yaml_if_missing(full_cfg)
-        _make_fast_yaml_from_full(full_cfg, fast_cfg)
+        if full_cfg.exists():
+            _stage("fast_fallback_to_full_config")
+            return PPStructureV3(paddlex_config=str(full_cfg))
+
     elif profile == "full" and not full_cfg.exists():
         _export_full_yaml_if_missing(full_cfg)
 
-    if profile == "fast":
-        if fast_cfg.exists():
-            return PPStructureV3(paddlex_config=str(fast_cfg))
-    if profile == "full":
-        if full_cfg.exists():
-            return PPStructureV3(paddlex_config=str(full_cfg))
+    if profile == "full" and full_cfg.exists():
+        return PPStructureV3(paddlex_config=str(full_cfg))
     return PPStructureV3()
 
 
@@ -350,10 +601,10 @@ def _warmup_once(engine: Any, enabled: bool, profile: str, force_region_detectio
         _stage(f"warmup_skip err={e}")
 
 
-
-def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, force_region_detection: int, payload_mode: str) -> Dict[str, Any]:
+def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, force_region_detection: int) -> Dict[str, Any]:
     page_name = page_path.name
     page_start = time.perf_counter()
+    flags = _predict_flags(profile, force_region_detection)
     try:
         import cv2
         import numpy as np
@@ -369,10 +620,10 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
                 "t_init_ms": round(t_init_ms, 3),
                 "t_predict_ms": round(t_page_ms, 3),
                 "t_page_ms": round(t_page_ms, 3),
+                "predict_flags": flags,
             }
 
         predict_start = time.perf_counter()
-        flags = _predict_flags(profile, force_region_detection)
         try:
             output = _predict_with_fallback(engine, raw, flags)
         except Exception:
@@ -391,30 +642,29 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
                 "t_init_ms": round(t_init_ms, 3),
                 "t_predict_ms": round(t_predict_ms, 3),
                 "t_page_ms": round(t_page_ms, 3),
+                "predict_flags": flags,
             }
 
         pp_obj = _extract_first_object_fields(first)
+        pp_obj_min = _extract_first_object_fields(
+            first,
+            keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
+        )
         anchors, objects = _extract_min_entities(pp_json, pp_obj)
-        base_payload = {
+        payload = {
             "ok": True,
             "page_file": page_name,
+            "stage": "predict_done",
             "anchors": anchors,
             "objects": objects,
-            "pp_meta": {
-                "profile": profile,
-                "predict_flags": flags,
-                "t_init_ms": round(t_init_ms, 3),
-                "t_predict_ms": round(t_predict_ms, 3),
-                "payload_mode": payload_mode,
-            },
             "t_init_ms": round(t_init_ms, 3),
             "t_predict_ms": round(t_predict_ms, 3),
             "t_page_ms": round(t_page_ms, 3),
+            "predict_flags": flags,
         }
-        if payload_mode == "full":
-            base_payload["pp_json"] = pp_json
-            base_payload["pp_obj"] = pp_obj
-        return base_payload
+        if pp_obj_min:
+            payload["pp_obj"] = pp_obj_min
+        return payload
     except Exception as e:
         t_page_ms = (time.perf_counter() - page_start) * 1000.0
         return {
@@ -425,18 +675,22 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             "t_init_ms": round(t_init_ms, 3),
             "t_predict_ms": round(t_page_ms, 3),
             "t_page_ms": round(t_page_ms, 3),
+            "predict_flags": flags,
         }
 
 
 def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_detection: int, payload_mode: str) -> int:
     if not pages_dir.exists() or not pages_dir.is_dir():
-        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": f"invalid pages_dir: {pages_dir}"})
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": f"invalid pages_dir: {pages_dir}", "profile": profile})
         return 1
+
+    if payload_mode != "min":
+        _stage("payload_mode_forced min")
 
     page_files = _sorted_page_files(pages_dir)
     _stage(f"start pages={len(page_files)} profile={profile}")
     if not page_files:
-        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "load_pages", "err": "no P*.png files"})
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "load_pages", "err": "no P*.png files", "profile": profile})
         return 1
 
     init_start = time.perf_counter()
@@ -457,9 +711,8 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
             t_init_ms=t_init_ms,
             profile=profile,
             force_region_detection=force_region_detection,
-            payload_mode=payload_mode,
         )
-        payload.setdefault("profile", profile)
+        payload["profile"] = profile
         t_emit_ms = _emit_json(payload, fallback_page_file=page_path.name)
         _stage(
             f"predict_done {page_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
@@ -472,8 +725,11 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
 
 def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_detection: int, payload_mode: str) -> int:
     if not image_path.exists() or not image_path.is_file():
-        _emit_json({"ok": False, "page_file": image_path.name, "stage": "args", "err": f"invalid image_path: {image_path}"})
+        _emit_json({"ok": False, "page_file": image_path.name, "stage": "args", "err": f"invalid image_path: {image_path}", "profile": profile})
         return 1
+
+    if payload_mode != "min":
+        _stage("payload_mode_forced min")
 
     init_start = time.perf_counter()
     try:
@@ -491,8 +747,8 @@ def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_
         t_init_ms=t_init_ms,
         profile=profile,
         force_region_detection=force_region_detection,
-        payload_mode=payload_mode,
     )
+    payload["profile"] = profile
     t_emit_ms = _emit_json(payload, fallback_page_file=image_path.name)
     _stage(
         f"predict_done {image_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
@@ -530,7 +786,7 @@ def main() -> int:
             payload_mode=args.payload,
         )
 
-    _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": "usage: v3_isolation_runner.py (--pages_dir DIR) | (image_path)"})
+    _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": "usage: v3_isolation_runner.py (--pages_dir DIR) | (image_path)", "profile": args.profile})
     return 1
 
 
