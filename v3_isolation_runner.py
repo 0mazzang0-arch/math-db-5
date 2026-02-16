@@ -136,9 +136,10 @@ def _extract_json(first: Any) -> Any:
     return None
 
 
-def _extract_first_object_fields(first: Any) -> Dict[str, Any]:
+def _extract_first_object_fields(first: Any, keys: List[str] | None = None) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
-    for key in ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]:
+    selected_keys = keys or ["overall_ocr_res", "parsing_res_list", "region_det_res", "layout_det_res", "table_res_list"]
+    for key in selected_keys:
         try:
             value = first.get(key) if isinstance(first, dict) else getattr(first, key, None)
         except Exception:
@@ -394,6 +395,10 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             }
 
         pp_obj = _extract_first_object_fields(first)
+        pp_obj_min = _extract_first_object_fields(
+            first,
+            keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
+        )
         anchors, objects = _extract_min_entities(pp_json, pp_obj)
         base_payload = {
             "ok": True,
@@ -414,6 +419,8 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
         if payload_mode == "full":
             base_payload["pp_json"] = pp_json
             base_payload["pp_obj"] = pp_obj
+        elif pp_obj_min:
+            base_payload["pp_obj"] = pp_obj_min
         return base_payload
     except Exception as e:
         t_page_ms = (time.perf_counter() - page_start) * 1000.0
