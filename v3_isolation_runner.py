@@ -443,32 +443,12 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
             _stage("make_fast_yaml_skip full_yaml_invalid")
             return False
 
+        # Change only top-level fast switches. Keep YAML structure intact.
         data["use_table_recognition"] = False
         data["use_formula_recognition"] = False
         data["use_chart_recognition"] = False
         data["use_seal_recognition"] = False
         data["use_region_detection"] = True
-
-        submodules = data.get("SubModules") if isinstance(data.get("SubModules"), dict) else None
-        if isinstance(submodules, dict):
-            submodules.pop("ChartRecognition", None)
-
-        subpipelines = data.get("SubPipelines") if isinstance(data.get("SubPipelines"), dict) else None
-        if isinstance(subpipelines, dict):
-            for key in ("TableRecognition", "FormulaRecognition", "SealRecognition"):
-                subpipelines.pop(key, None)
-
-            doc_pre = subpipelines.get("DocPreprocessor")
-            if isinstance(doc_pre, dict):
-                doc_pre["use_doc_orientation_classify"] = False
-                doc_pre["use_doc_unwarping"] = False
-
-            general_ocr = subpipelines.get("GeneralOCR")
-            if isinstance(general_ocr, dict):
-                general_ocr["use_textline_orientation"] = False
-                g_sub = general_ocr.get("SubModules")
-                if isinstance(g_sub, dict):
-                    g_sub.pop("TextLineOrientation", None)
 
         _dump_yaml_with_fallback(data, fast_yaml)
         if not _validate_fast_yaml_region_detection(fast_yaml):
@@ -482,21 +462,13 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         return False
 
 
-def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> None:
-    _stage(f"fast_init_failed err={init_err}")
-    removed = False
+def _delete_fast_yaml(fast_cfg: Path, reason: str) -> None:
     try:
         if fast_cfg.exists():
             fast_cfg.unlink()
-            removed = True
+            _stage(f"fast_yaml_deleted reason={reason}")
     except Exception as e:
-        _stage(f"fast_yaml_remove_failed err={e}")
-    else:
-        _stage(f"fast_yaml_removed={removed}")
-
-    _export_full_yaml_if_missing(full_cfg)
-    _make_fast_yaml_from_full(full_cfg, fast_cfg)
-    _stage(f"fast_yaml_regenerated exists={fast_cfg.exists()}")
+        _stage(f"fast_yaml_delete_failed reason={reason} err={e}")
 
 
 def _load_engine(profile: str) -> Any:
@@ -509,30 +481,19 @@ def _load_engine(profile: str) -> Any:
         if not fast_cfg.exists():
             _stage("fast_yaml_missing regenerate")
             _export_full_yaml_if_missing(full_cfg)
-            created = _make_fast_yaml_from_full(full_cfg, fast_cfg)
-            if not created:
-                _stage("fast_yaml_generate_failed fallback_full")
+            if not _make_fast_yaml_from_full(full_cfg, fast_cfg):
+                raise RuntimeError("fast_yaml_generate_failed")
 
-        if fast_cfg.exists() and _validate_fast_yaml_region_detection(fast_cfg):
-            try:
-                return PPStructureV3(paddlex_config=str(fast_cfg))
-            except Exception as e:
-                _stage(f"fast_yaml_load_failed err={e}")
-                _recover_fast_yaml(full_cfg, fast_cfg, e)
-                if fast_cfg.exists() and _validate_fast_yaml_region_detection(fast_cfg):
-                    try:
-                        _stage("fast_init_retry")
-                        return PPStructureV3(paddlex_config=str(fast_cfg))
-                    except Exception as retry_err:
-                        _stage(f"fast_yaml_retry_load_failed err={retry_err}")
-                _stage("fast_yaml_retry_invalid fallback_full")
-        else:
-            _stage("fast_yaml_invalid fallback_full")
+        if not _validate_fast_yaml_region_detection(fast_cfg):
+            _delete_fast_yaml(fast_cfg, "region_validation_failed")
+            raise RuntimeError("fast_yaml_invalid_region_detection")
 
-        _export_full_yaml_if_missing(full_cfg)
-        if full_cfg.exists():
-            _stage("fast_fallback_to_full_config")
-            return PPStructureV3(paddlex_config=str(full_cfg))
+        try:
+            return PPStructureV3(paddlex_config=str(fast_cfg))
+        except Exception as e:
+            _stage(f"fast_yaml_load_failed err={e}")
+            _delete_fast_yaml(fast_cfg, "load_failed")
+            raise RuntimeError(f"fast_init_failed: {e}") from e
 
     elif profile == "full" and not full_cfg.exists():
         _export_full_yaml_if_missing(full_cfg)
