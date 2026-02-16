@@ -443,12 +443,47 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
             _stage("make_fast_yaml_skip full_yaml_invalid")
             return False
 
-        # Change only top-level fast switches. Keep YAML structure intact.
+        # Fast global switches
         data["use_table_recognition"] = False
         data["use_formula_recognition"] = False
         data["use_chart_recognition"] = False
         data["use_seal_recognition"] = False
         data["use_region_detection"] = True
+
+        submodules = data.get("SubModules")
+        if isinstance(submodules, dict):
+            submodules.pop("ChartRecognition", None)
+
+        subpipes = data.get("SubPipelines")
+        if isinstance(subpipes, dict):
+            subpipes.pop("TableRecognition", None)
+            subpipes.pop("FormulaRecognition", None)
+            subpipes.pop("SealRecognition", None)
+
+            doc_pre = subpipes.get("DocPreprocessor")
+            if isinstance(doc_pre, dict):
+                doc_pre["use_doc_orientation_classify"] = False
+                doc_pre["use_doc_unwarping"] = False
+
+            gen_ocr = subpipes.get("GeneralOCR")
+            if isinstance(gen_ocr, dict):
+                gen_ocr["use_textline_orientation"] = False
+                gen_sub = gen_ocr.get("SubModules")
+                if isinstance(gen_sub, dict):
+                    gen_sub.pop("TextLineOrientation", None)
+
+        def _down_batch(obj: Any) -> None:
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k == "batch_size" and isinstance(v, int):
+                        obj[k] = 1
+                    else:
+                        _down_batch(v)
+            elif isinstance(obj, list):
+                for it in obj:
+                    _down_batch(it)
+
+        _down_batch(data)
 
         _dump_yaml_with_fallback(data, fast_yaml)
         if not _validate_fast_yaml_region_detection(fast_yaml):
