@@ -353,6 +353,21 @@ def _predict_with_fallback(engine: Any, inp: Any, predict_kwargs: Dict[str, Any]
 
 
 
+def _validate_export_schema(cfg: Any, label: str) -> tuple[bool, str]:
+    if not isinstance(cfg, dict):
+        return False, f"{label}: root is not dict"
+    if "Global" in cfg:
+        return False, f"{label}: top-level Global key detected"
+    for key in ("pipeline_name", "SubModules", "SubPipelines"):
+        if key not in cfg:
+            return False, f"{label}: missing {key}"
+    if not isinstance(cfg.get("SubModules"), dict):
+        return False, f"{label}: SubModules is not dict"
+    if not isinstance(cfg.get("SubPipelines"), dict):
+        return False, f"{label}: SubPipelines is not dict"
+    return True, "ok"
+
+
 def _is_valid_full_yaml(full_yaml: Path) -> bool:
     if not full_yaml.exists():
         return False
@@ -361,25 +376,20 @@ def _is_valid_full_yaml(full_yaml: Path) -> bool:
     except Exception as e:
         _stage(f"full_yaml_validate_read_failed err={e}")
         return False
-    if not isinstance(cfg, dict):
-        return False
-    return isinstance(cfg.get("SubModules"), dict) and isinstance(cfg.get("SubPipelines"), dict)
+    ok, _ = _validate_export_schema(cfg, "full_yaml")
+    return ok
+
 
 def _export_full_yaml_if_missing(full_yaml: Path) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    if full_yaml.exists() and _is_valid_full_yaml(full_yaml):
-        return
 
     if full_yaml.exists():
-        try:
-            placeholder = full_yaml.with_name("PP-StructureV3_full.placeholder.yaml")
-            if placeholder.exists():
-                ts = time.strftime("%Y%m%d-%H%M%S")
-                placeholder = full_yaml.with_name(f"PP-StructureV3_full.placeholder.{ts}.yaml")
-            full_yaml.rename(placeholder)
-            _stage(f"full_yaml_placeholder_renamed to={placeholder.name}")
-        except Exception as e:
-            _stage(f"full_yaml_placeholder_rename_failed err={e}")
+        cfg = _load_yaml_with_fallback(full_yaml)
+        ok, reason = _validate_export_schema(cfg, "full_yaml")
+        if ok:
+            return
+        _stage(f"full_yaml_invalid err={reason}")
+        raise RuntimeError(reason)
 
     try:
         from paddleocr import PPStructureV3
@@ -388,6 +398,13 @@ def _export_full_yaml_if_missing(full_yaml: Path) -> None:
         _stage(f"exported_full_yaml {full_yaml.name}")
     except Exception as e:
         _stage(f"export_full_yaml_skip err={e}")
+        raise
+
+    cfg2 = _load_yaml_with_fallback(full_yaml)
+    ok2, reason2 = _validate_export_schema(cfg2, "full_yaml_exported")
+    if not ok2:
+        _stage(f"full_yaml_export_invalid err={reason2}")
+        raise RuntimeError(reason2)
 
 
 def _load_yaml_with_fallback(path: Path) -> Dict[str, Any]:
@@ -444,11 +461,9 @@ def _validate_fast_yaml_region_detection(fast_yaml: Path) -> bool:
         _stage(f"fast_yaml_validate_read_failed err={e}")
         return False
 
-    if not isinstance(data, dict):
-        _stage("fast_yaml_validate_invalid_root")
-        return False
-    if "SubModules" not in data or not isinstance(data.get("SubModules"), dict):
-        _stage("fast_yaml_validate_missing SubModules")
+    ok_schema, schema_reason = _validate_export_schema(data, "fast_yaml")
+    if not ok_schema:
+        _stage(f"fast_yaml_validate_schema_failed err={schema_reason}")
         return False
 
     submodules = data.get("SubModules")
@@ -479,8 +494,9 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         return False
     try:
         data = _load_yaml_with_fallback(full_yaml)
-        if not isinstance(data, dict) or not data:
-            _stage("make_fast_yaml_skip full_yaml_invalid")
+        ok_schema, schema_reason = _validate_export_schema(data, "full_yaml_for_fast")
+        if not ok_schema:
+            _stage(f"make_fast_yaml_skip schema_invalid err={schema_reason}")
             return False
 
         # Top-level fast switches.
@@ -516,6 +532,9 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         _dump_yaml_with_fallback(data, fast_yaml)
         if not _validate_fast_yaml_region_detection(fast_yaml):
             _stage("make_fast_yaml_skip validation_failed")
+            region = data.get("SubModules", {}).get("RegionDetection") if isinstance(data.get("SubModules"), dict) else {}
+            if isinstance(region, dict):
+                _stage(f"fast_yaml_region_keys keys={list(region.keys())}")
             _delete_fast_yaml(fast_yaml, "validation_failed")
             return False
 
@@ -525,6 +544,9 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
 
             PPStructureV3(paddlex_config=str(fast_yaml))
         except Exception as e:
+            region = data.get("SubModules", {}).get("RegionDetection") if isinstance(data.get("SubModules"), dict) else {}
+            if isinstance(region, dict):
+                _stage(f"fast_yaml_region_keys keys={list(region.keys())}")
             _stage(f"fast_yaml_post_generate_load_failed err={e}")
             _delete_fast_yaml(fast_yaml, "post_generate_load_failed")
             return False
