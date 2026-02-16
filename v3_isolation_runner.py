@@ -7,6 +7,7 @@ import re
 import sys
 import time
 import subprocess
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -14,6 +15,7 @@ _LAST_EMIT_MS = 0.0
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "configs"
 _ANCHOR_RE = re.compile(r"^\s*([A-C])\s*([0-9]{1,3})?\s*$")
+_LEADING_NUM_RE = re.compile(r"^\s*(\d{4})(?=[\s\.\)\]]|$)")
 _PAYLOAD_DROP_KEYS = {"img", "image", "dummy", "pixels", "raw", "page_bytes", "file_bytes", "input"}
 _MIN_PAYLOAD_KEYS = {
     "ok",
@@ -328,32 +330,57 @@ def _extract_bbox(node: Dict[str, Any]) -> List[int]:
 
 
 def _extract_text(node: Dict[str, Any]) -> str:
-    for k in ("text", "transcription", "label", "cls", "type", "content"):
+    for k in ("text", "rec_text", "transcription", "label", "cls", "type", "content"):
         v = node.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()
     return ""
 
 
-def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _normalize_anchor_text(text: str) -> str:
+    t = unicodedata.normalize("NFKC", text or "")
+    return " ".join(t.strip().split())
+
+
+def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
     anchors: List[Dict[str, Any]] = []
     objects: List[Dict[str, Any]] = []
     seen_anchor = set()
     seen_obj = set()
+    candidate_text_count = 0
 
-    for src in (pp_obj, pp_json):
+    sources: List[Any] = []
+    if isinstance(pp_json, dict):
+        if "res" in pp_json:
+            sources.append(pp_json.get("res"))
+        sources.append(pp_json)
+    if isinstance(pp_obj, dict):
+        for key in ("overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"):
+            if key in pp_obj:
+                sources.append(pp_obj.get(key))
+        sources.append(pp_obj)
+
+    for src in sources:
         for node in _iter_dicts(src):
+            text = _normalize_anchor_text(_extract_text(node))
+            if text:
+                candidate_text_count += 1
+
             bbox = _extract_bbox(node)
             if not bbox:
                 continue
-            text = _extract_text(node)
-            m = _ANCHOR_RE.match(text.upper()) if text else None
-            if m:
-                key = tuple(bbox)
+
+            m_num = _LEADING_NUM_RE.match(text) if text else None
+            m_col = _ANCHOR_RE.match(text.upper()) if text else None
+            if m_num or m_col:
+                n_val = int(m_num.group(1)) if m_num else -1
+                anchor_text = text
+                key = (n_val, *bbox, anchor_text)
                 if key not in seen_anchor:
                     seen_anchor.add(key)
-                    anchors.append({"id": text, "text": text, "bbox": bbox, "col": 0})
-            low = (text or "").lower()
+                    anchors.append({"id": anchor_text, "text": anchor_text, "n": n_val, "bbox": bbox, "col": 0})
+
+            low = text.lower()
             obj_type = ""
             if any(t in low for t in ["figure", "fig", "image", "photo"]):
                 obj_type = "figure"
@@ -368,7 +395,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                     objects.append({"type": obj_type, "bbox": bbox})
 
     anchors.sort(key=lambda a: (a.get("bbox", [0, 0, 0, 0])[1], a.get("bbox", [0, 0, 0, 0])[0]))
-    return anchors, objects
+    return anchors, objects, candidate_text_count
 
 
 def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
@@ -735,7 +762,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             first,
             keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
         )
-        anchors, objects = _extract_min_entities(pp_json, pp_obj)
+        anchors, objects, candidate_count = _extract_min_entities(pp_json, pp_obj)
         payload = {
             "ok": True,
             "page_file": page_name,
@@ -749,6 +776,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
         }
         if pp_obj_min:
             payload["pp_obj"] = pp_obj_min
+        print(f"[debug] {page_name} candidates={candidate_count} anchors={len(anchors)}", file=sys.stderr, flush=True)
         return payload
     except Exception as e:
         t_page_ms = (time.perf_counter() - page_start) * 1000.0
