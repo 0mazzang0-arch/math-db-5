@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "configs"
 _ANCHOR_RE = re.compile(r"^\s*([A-C])\s*([0-9]{1,3})?\s*$")
 _LEADING_NUM_RE = re.compile(r"^\s*(\d{4})(?=[\s\.\)\]]|$)")
-_LABEL_LIKE_TEXTS = {"text", "footer", "formula", "number", "header", "image", "table", "figure", "caption", "title", "reference", "equation"}
+_ANCHOR_4DIGIT_RELAXED_RE = re.compile(r"(?<!\d)(\d{4})(?!\d)")
+_LABEL_LIKE_TEXTS = {"text", "footer", "formula", "number", "header", "image", "table", "figure", "caption", "title", "reference", "equation", "aside_text", "footnote"}
 _PAYLOAD_DROP_KEYS = {"img", "image", "dummy", "pixels", "raw", "page_bytes", "file_bytes", "input"}
 _MIN_PAYLOAD_KEYS = {
     "ok",
@@ -332,7 +333,7 @@ def _extract_bbox(node: Dict[str, Any]) -> List[int]:
 
 
 def _extract_text(node: Dict[str, Any]) -> str:
-    for k in ("text", "rec_text", "transcription", "ocr", "line"):
+    for k in ("text", "rec_text", "transcription", "ocr_text", "ocr", "line"):
         v = node.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()
@@ -351,12 +352,40 @@ def _is_label_like_text(text: str) -> bool:
     return low in _LABEL_LIKE_TEXTS
 
 
-def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, List[str]]:
+def _normalize_digit_candidate(text: str) -> str:
+    t = _normalize_anchor_text(text)
+    core = re.sub(r"[\s\]\[\(\)\.-]", "", t)
+    if not core:
+        return t
+    if any(ch.isalpha() and ch not in "OoIlSB" for ch in core):
+        return t
+    digitish = sum(ch.isdigit() or ch in "OoIlSB" for ch in core)
+    if digitish / max(1, len(core)) < 0.8:
+        return t
+    trans = str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1", "S": "5", "B": "8"})
+    return t.translate(trans)
+
+
+def _find_anchor_number(text: str) -> int | None:
+    if not text:
+        return None
+    m = _LEADING_NUM_RE.match(text)
+    if m:
+        return int(m.group(1))
+    prefix = text[:6]
+    m2 = _ANCHOR_4DIGIT_RELAXED_RE.search(prefix)
+    if m2:
+        return int(m2.group(1))
+    return None
+
+
+def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, List[str]]:
     anchors: List[Dict[str, Any]] = []
     objects: List[Dict[str, Any]] = []
     seen_anchor = set()
     seen_obj = set()
     candidate_text_count = 0
+    digit_candidate_count = 0
     candidate_samples: List[str] = []
     seen_sample = set()
 
@@ -376,22 +405,26 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
 
     for src in ocr_sources:
         for node in _iter_dicts(src):
-            text = _normalize_anchor_text(_extract_text(node))
+            text_raw = _extract_text(node)
+            text = _normalize_digit_candidate(text_raw)
             if _is_label_like_text(text):
                 continue
             candidate_text_count += 1
-            if len(candidate_samples) < 5 and text not in seen_sample:
-                seen_sample.add(text)
-                candidate_samples.append(text)
+            has_digit = any(ch.isdigit() for ch in text)
+            if has_digit:
+                digit_candidate_count += 1
+                if len(candidate_samples) < 5 and text not in seen_sample:
+                    seen_sample.add(text)
+                    candidate_samples.append(text)
 
             bbox = _extract_bbox(node)
             if not bbox:
                 continue
 
-            m_num = _LEADING_NUM_RE.match(text)
+            n_found = _find_anchor_number(text)
             m_col = _ANCHOR_RE.match(text.upper())
-            if m_num or m_col:
-                n_val = int(m_num.group(1)) if m_num else -1
+            if n_found is not None or m_col:
+                n_val = n_found if n_found is not None else -1
                 anchor_text = text
                 key = (n_val, *bbox, anchor_text)
                 if key not in seen_anchor:
@@ -428,7 +461,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                     objects.append({"type": obj_type, "bbox": bbox})
 
     anchors.sort(key=lambda a: (a.get("bbox", [0, 0, 0, 0])[1], a.get("bbox", [0, 0, 0, 0])[0]))
-    return anchors, objects, candidate_text_count, candidate_samples
+    return anchors, objects, candidate_text_count, digit_candidate_count, candidate_samples
 
 
 def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
@@ -794,7 +827,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             first,
             keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
         )
-        anchors, objects, candidate_count, candidate_samples = _extract_min_entities(pp_json, pp_obj)
+        anchors, objects, candidate_count, digit_candidate_count, candidate_samples = _extract_min_entities(pp_json, pp_obj)
         payload = {
             "ok": True,
             "page_file": page_name,
@@ -809,7 +842,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
         if pp_obj:
             payload["pp_obj"] = pp_obj
         print(
-            f"[debug] {page_name} candidates={candidate_count} matches={len(anchors)} sample_texts={json.dumps(candidate_samples, ensure_ascii=True)}",
+            f"[debug] {page_name} candidates={candidate_count} digit_candidates={digit_candidate_count} matches={len(anchors)} sample_texts={json.dumps(candidate_samples, ensure_ascii=True)}",
             file=sys.stderr,
             flush=True,
         )
