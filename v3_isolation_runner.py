@@ -29,7 +29,6 @@ _MIN_PAYLOAD_KEYS = {
 _MAX_LIST_LEN = 2000
 _MAX_DICT_KEYS = 200
 _MAX_DUMP_CHARS = 200 * 1024
-_PP_OBJ_MIN_KEYS = ("overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res")
 _QUIET = False
 _JSONL_OUT_PATH = ""
 
@@ -126,15 +125,31 @@ def _sanitize_value(value: Any) -> Any:
     return value
 
 
-def _build_min_pp_obj(pp_obj: Any) -> Dict[str, Any]:
-    if not isinstance(pp_obj, dict):
-        return {}
-    out: Dict[str, Any] = {}
-    for key in _PP_OBJ_MIN_KEYS:
-        if key in pp_obj and pp_obj[key] is not None:
-            out[key] = _sanitize_value(pp_obj[key])
+def _build_min_anchors(anchors: Any) -> List[Dict[str, Any]]:
+    if not isinstance(anchors, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in anchors[:_MAX_LIST_LEN]:
+        if not isinstance(item, dict):
+            continue
+        bbox = item.get("bbox")
+        if not (isinstance(bbox, list) and len(bbox) == 4):
+            continue
+        try:
+            bbox_i = [int(float(v)) for v in bbox]
+        except Exception:
+            continue
+        text = item.get("text") or item.get("id") or ""
+        text_s = str(text).strip()
+        m = _ANCHOR_RE.match(text_s.upper()) if text_s else None
+        n_val = -1
+        if m and m.group(2):
+            try:
+                n_val = int(m.group(2))
+            except Exception:
+                n_val = -1
+        out.append({"n": n_val, "bbox": bbox_i, "text": text_s})
     return out
-
 
 def _build_min_payload(payload: Dict[str, Any], fallback_page_file: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {"page_file": payload.get("page_file", fallback_page_file)}
@@ -142,9 +157,10 @@ def _build_min_payload(payload: Dict[str, Any], fallback_page_file: str) -> Dict
         if key in payload:
             out[key] = payload[key]
 
-    pp_obj_min = _build_min_pp_obj(payload.get("pp_obj"))
-    if pp_obj_min:
-        out["pp_obj"] = pp_obj_min
+    anchors_min = _build_min_anchors(payload.get("anchors"))
+    out["anchors_count"] = len(anchors_min)
+    if anchors_min:
+        out["anchors"] = anchors_min
 
     out.setdefault("stage", payload.get("stage", "predict_done"))
     out.setdefault("profile", payload.get("profile", "fast"))
@@ -336,7 +352,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                 key = tuple(bbox)
                 if key not in seen_anchor:
                     seen_anchor.add(key)
-                    anchors.append({"id": text, "bbox": bbox, "col": 0})
+                    anchors.append({"id": text, "text": text, "bbox": bbox, "col": 0})
             low = (text or "").lower()
             obj_type = ""
             if any(t in low for t in ["figure", "fig", "image", "photo"]):
