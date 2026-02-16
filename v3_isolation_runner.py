@@ -806,6 +806,9 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
         _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": f"invalid pages_dir: {pages_dir}", "profile": profile}, payload_mode=payload_mode)
         return 1
 
+    if payload_mode != "min":
+        _stage("payload_mode_forced min")
+
     page_files = _sorted_page_files(pages_dir)
     _stage(f"start pages={len(page_files)} profile={profile}")
     if not page_files:
@@ -846,6 +849,9 @@ def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_
     if not image_path.exists() or not image_path.is_file():
         _emit_json({"ok": False, "page_file": image_path.name, "stage": "args", "err": f"invalid image_path: {image_path}", "profile": profile}, payload_mode=payload_mode)
         return 1
+
+    if payload_mode != "min":
+        _stage("payload_mode_forced min")
 
     init_start = time.perf_counter()
     try:
