@@ -408,11 +408,42 @@ def _extract_text(node: Dict[str, Any]) -> str:
 
 
 def _poly_to_bbox(poly: Any) -> List[int]:
+    if hasattr(poly, "tolist"):
+        try:
+            poly = poly.tolist()
+        except Exception:
+            pass
+
+    if isinstance(poly, dict):
+        poly = poly.get("points") or poly.get("poly") or poly.get("polygon") or poly.get("dt_polys") or poly.get("dt_poly")
+
     if not isinstance(poly, (list, tuple)):
         return []
+
+    # Flattened coordinates: [x1,y1,x2,y2,...]
+    if all(not isinstance(p, (list, tuple, dict)) for p in poly):
+        nums = []
+        for p in poly:
+            try:
+                nums.append(float(p))
+            except Exception:
+                pass
+        if len(nums) == 4:
+            return [int(nums[0]), int(nums[1]), int(nums[2]), int(nums[3])]
+        if len(nums) >= 8 and len(nums) % 2 == 0:
+            xs = nums[0::2]
+            ys = nums[1::2]
+            return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+
+    # Point-list coordinates: [[x,y], ...]
     pts: List[Tuple[float, float]] = []
     for p in poly:
-        if isinstance(p, (list, tuple)) and len(p) >= 2:
+        if hasattr(p, "tolist"):
+            try:
+                p = p.tolist()
+            except Exception:
+                pass
+        if isinstance(p, (list, tuple)) and len(p) >= 2 and not isinstance(p[0], (list, tuple, dict)):
             try:
                 pts.append((float(p[0]), float(p[1])))
             except Exception:
