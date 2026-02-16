@@ -1,5 +1,5 @@
 SubModules:
-    LayoutDetection:
+  LayoutDetection:
     batch_size: 8
     layout_merge_bboxes_mode:
       0: large
@@ -95,7 +95,6 @@ SubPipelines:
         module_name: text_detection
         thresh: 0.3
         unclip_ratio: 1.5
-      
       TextRecognition:
         batch_size: 8
         model_dir: null
@@ -106,7 +105,7 @@ SubPipelines:
     pipeline_name: OCR
     text_type: general
     use_doc_preprocessor: false
-    use_textline_orientation: true
+    use_textline_orientation: false
   SealRecognition:
     SubPipelines:
       SealOCR:
@@ -205,9 +204,9 @@ markdown_ignore_labels:
 - footer_image
 - aside_text
 pipeline_name: PP-StructureV3
-use_table_recognition: false
-use_formula_recognition: false
 use_chart_recognition: false
-use_seal_recognition: false
-use_region_detection: true
 use_doc_preprocessor: true
+use_formula_recognition: false
+use_region_detection: true
+use_seal_recognition: false
+use_table_recognition: false
