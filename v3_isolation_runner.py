@@ -347,18 +347,30 @@ def _iter_dicts(obj: Any):
             yield from _iter_dicts(it)
 
 
+def _bbox_valid(bbox: Any) -> bool:
+    return isinstance(bbox, list) and len(bbox) == 4 and all(isinstance(v, (int, float)) for v in bbox)
+
+
+def _first_non_none(node: Dict[str, Any], keys: Tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in node:
+            value = node.get(key)
+            if value is not None:
+                return value
+    return None
+
+
 def _extract_bbox(node: Dict[str, Any]) -> List[int]:
-    cand = (
-        node.get("bbox")
-        or node.get("dt_bbox")
-        or node.get("dt_box")
-        or node.get("dt_boxes")
-        or node.get("rec_box")
-        or node.get("rec_boxes")
-        or node.get("box")
-        or node.get("boxes")
-        or node.get("rect")
+    cand = _first_non_none(
+        node,
+        ("bbox", "dt_bbox", "dt_box", "dt_boxes", "rec_box", "rec_boxes", "box", "boxes", "rect"),
     )
+    if hasattr(cand, "tolist"):
+        try:
+            cand = cand.tolist()
+        except Exception:
+            pass
+
     if isinstance(cand, dict):
         if all(k in cand for k in ("x", "y", "w", "h")):
             try:
@@ -372,64 +384,17 @@ def _extract_bbox(node: Dict[str, Any]) -> List[int]:
             except Exception:
                 pass
 
-    if hasattr(cand, "tolist"):
-        try:
-            cand = cand.tolist()
-        except Exception:
-            pass
     if isinstance(cand, (list, tuple)) and len(cand) == 4 and all(not isinstance(x, (list, tuple, dict)) for x in cand):
         try:
             return [int(float(cand[0])), int(float(cand[1])), int(float(cand[2])), int(float(cand[3]))]
         except Exception:
             pass
 
-    poly = (
-        node.get("poly")
-        or node.get("dt_poly")
-        or node.get("dt_polys")
-        or node.get("rec_poly")
-        or node.get("rec_polys")
-        or node.get("polygon")
-        or node.get("points")
-        or node.get("polys")
+    poly = _first_non_none(
+        node,
+        ("poly", "dt_poly", "dt_polys", "rec_poly", "rec_polys", "polygon", "points", "polys"),
     )
-    if hasattr(poly, "tolist"):
-        try:
-            poly = poly.tolist()
-        except Exception:
-            pass
-    if isinstance(poly, (list, tuple)) and len(poly) >= 4:
-        # flatten form: [x1,y1,x2,y2,...]
-        if all(not isinstance(it, (list, tuple, dict)) for it in poly):
-            nums = []
-            for it in poly:
-                try:
-                    nums.append(float(it))
-                except Exception:
-                    pass
-            if len(nums) >= 8:
-                xs = nums[0::2]
-                ys = nums[1::2]
-                return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
-
-        pts = []
-        for p in poly:
-            if hasattr(p, "tolist"):
-                try:
-                    p = p.tolist()
-                except Exception:
-                    pass
-            if isinstance(p, (list, tuple)) and len(p) >= 2:
-                try:
-                    pts.append((float(p[0]), float(p[1])))
-                except Exception:
-                    pass
-        if pts:
-            xs = [x for x, _ in pts]
-            ys = [y for _, y in pts]
-            return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
-    return []
-
+    return _poly_to_bbox(poly)
 
 def _extract_text(node: Dict[str, Any]) -> str:
     for k in ("text", "rec_text", "transcription", "ocr_text", "ocr", "line"):
@@ -447,12 +412,25 @@ def _poly_to_bbox(poly: Any) -> List[int]:
             pass
 
     if isinstance(poly, dict):
-        poly = poly.get("points") or poly.get("poly") or poly.get("polygon") or poly.get("dt_polys") or poly.get("dt_poly")
+        nested = None
+        for key in ("points", "poly", "polygon", "dt_polys", "dt_poly", "polys", "boxes", "box"):
+            if key in poly:
+                val = poly.get(key)
+                if val is not None:
+                    nested = val
+                    break
+        if nested is not None:
+            poly = nested
+
+    if hasattr(poly, "tolist"):
+        try:
+            poly = poly.tolist()
+        except Exception:
+            pass
 
     if not isinstance(poly, (list, tuple)):
         return []
 
-    # Flattened coordinates: [x1,y1,x2,y2,...]
     if all(not isinstance(p, (list, tuple, dict)) for p in poly):
         nums = []
         for p in poly:
@@ -467,7 +445,6 @@ def _poly_to_bbox(poly: Any) -> List[int]:
             ys = nums[1::2]
             return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
 
-    # Point-list coordinates: [[x,y], ...]
     pts: List[Tuple[float, float]] = []
     for p in poly:
         if hasattr(p, "tolist"):
@@ -485,7 +462,6 @@ def _poly_to_bbox(poly: Any) -> List[int]:
     xs = [x for x, _ in pts]
     ys = [y for _, y in pts]
     return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
-
 
 def _box_to_bbox(box: Any) -> List[int]:
     if hasattr(box, "tolist"):
@@ -506,18 +482,21 @@ def _box_to_bbox(box: Any) -> List[int]:
 
 
 def _is_poly_like(value: Any) -> bool:
-    return bool(_poly_to_bbox(value) or _box_to_bbox(value))
-
+    pb = _poly_to_bbox(value)
+    if _bbox_valid(pb):
+        return True
+    bb = _box_to_bbox(value)
+    return _bbox_valid(bb)
 
 def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None, zip_key_counts: Dict[str, int] | None = None):
     if isinstance(obj, dict):
-        cur_bbox = _extract_bbox(obj) or (inherited_bbox or [])
+        extracted_bbox = _extract_bbox(obj)
+        cur_bbox = extracted_bbox if _bbox_valid(extracted_bbox) else (inherited_bbox if _bbox_valid(inherited_bbox) else [])
 
         text = _extract_text(obj)
         if text:
             yield text, cur_bbox
 
-        # Parallel OCR arrays: boxes/polys + texts
         def _arr(name: str) -> Any:
             v = obj.get(name)
             if hasattr(v, "tolist"):
@@ -527,71 +506,80 @@ def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None, zip_key_c
                     pass
             return v
 
+        text_keys = ("rec_texts", "rec_text", "rec_res", "texts", "text")
+        box_keys = ("rec_boxes", "dt_boxes", "boxes", "bboxes", "dt_bboxes")
+        poly_keys = ("rec_polys", "dt_polys", "polys", "dt_poly")
+
         text_arr = None
         text_key = ""
-        for k in ("rec_texts", "rec_text", "rec_res", "texts", "text", "rec_text_list"):
+        for k in text_keys:
             v = _arr(k)
-            if isinstance(v, (list, tuple)) and v and all(isinstance(x, str) for x in v):
-                text_arr = v
-                text_key = k
-                break
+            if isinstance(v, (list, tuple)):
+                if zip_key_counts is not None:
+                    try:
+                        zip_key_counts[k] = int(len(v))
+                    except Exception:
+                        pass
+                if len(v) > 0 and all(isinstance(x, str) for x in v):
+                    text_arr = v
+                    text_key = k
+                    break
 
         pair_consumed = False
         paired_keys: set[str] = set()
         if text_arr is not None:
             box_arr = None
             box_key = ""
-            for k in ("rec_boxes", "dt_boxes", "boxes", "bboxes", "dt_bboxes"):
+            for k in box_keys:
                 v = _arr(k)
-                if isinstance(v, (list, tuple)) and len(v) > 0:
-                    box_arr = v
-                    box_key = k
-                    break
+                if isinstance(v, (list, tuple)):
+                    if zip_key_counts is not None:
+                        try:
+                            zip_key_counts[k] = int(len(v))
+                        except Exception:
+                            pass
+                    if len(v) > 0:
+                        box_arr = v
+                        box_key = k
+                        break
+
             poly_arr = None
             poly_key = ""
-            for k in ("rec_polys", "dt_polys", "polys", "dt_poly"):
+            for k in poly_keys:
                 v = _arr(k)
-                if isinstance(v, (list, tuple)) and len(v) > 0:
-                    poly_arr = v
-                    poly_key = k
-                    break
+                if isinstance(v, (list, tuple)):
+                    if zip_key_counts is not None:
+                        try:
+                            zip_key_counts[k] = int(len(v))
+                        except Exception:
+                            pass
+                    if len(v) > 0:
+                        poly_arr = v
+                        poly_key = k
+                        break
 
-            if box_arr is not None and len(box_arr) == len(text_arr):
-                if zip_key_counts is not None:
-                    zip_key_counts[text_key] = len(text_arr)
-                    zip_key_counts[box_key] = len(box_arr)
+            if isinstance(box_arr, (list, tuple)) and len(box_arr) == len(text_arr):
                 for txt, box in zip(text_arr, box_arr):
                     if isinstance(txt, str) and txt.strip():
-                        yield txt, (_box_to_bbox(box) or cur_bbox)
+                        bb = _box_to_bbox(box)
+                        if not _bbox_valid(bb):
+                            bb = cur_bbox
+                        yield txt, bb
                 pair_consumed = True
                 paired_keys.update({text_key, box_key})
-            elif poly_arr is not None and len(poly_arr) == len(text_arr):
-                if zip_key_counts is not None:
-                    zip_key_counts[text_key] = len(text_arr)
-                    zip_key_counts[poly_key] = len(poly_arr)
+            elif isinstance(poly_arr, (list, tuple)) and len(poly_arr) == len(text_arr):
                 for txt, poly in zip(text_arr, poly_arr):
                     if isinstance(txt, str) and txt.strip():
-                        yield txt, (_poly_to_bbox(poly) or cur_bbox)
+                        pb = _poly_to_bbox(poly)
+                        if not _bbox_valid(pb):
+                            pb = cur_bbox
+                        yield txt, pb
                 pair_consumed = True
                 paired_keys.update({text_key, poly_key})
 
         skip_keys = {
-            "dt_polys",
-            "polys",
-            "boxes",
-            "dt_boxes",
-            "rec_text",
-            "rec_texts",
-            "rec_text_list",
-            "rec_res",
-            "texts",
-            "text",
-            "rec_boxes",
-            "bboxes",
-            "dt_bboxes",
-            "rec_polys",
-            "dt_poly",
-            "rec_poly",
+            "dt_polys", "polys", "boxes", "dt_boxes", "rec_text", "rec_texts", "rec_res", "texts", "text",
+            "rec_boxes", "bboxes", "dt_bboxes", "rec_polys", "dt_poly", "rec_poly",
         } | _SKIP_HEAVY_KEYS
         if pair_consumed:
             skip_keys |= paired_keys
@@ -602,31 +590,43 @@ def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None, zip_key_c
         return
 
     if isinstance(obj, (list, tuple)):
-        # Pair polymorphism: [poly, (text,score)] / [poly,text] / [(text,score),poly] / [text,poly]
         paired = False
         if len(obj) >= 2:
             a, b = obj[0], obj[1]
-            candidates = [(a, b), (b, a)]
-            for poly_like, text_like in candidates:
-                if not _is_poly_like(poly_like):
-                    continue
-                pb = _poly_to_bbox(poly_like) or _box_to_bbox(poly_like)
+            if _is_poly_like(a):
+                pb = _poly_to_bbox(a)
+                if not _bbox_valid(pb):
+                    pb = _box_to_bbox(a)
                 txt = ""
-                if isinstance(text_like, str):
-                    txt = text_like
-                elif isinstance(text_like, (list, tuple)) and text_like and isinstance(text_like[0], str):
-                    txt = text_like[0]
+                if isinstance(b, str):
+                    txt = b
+                elif isinstance(b, (list, tuple)) and len(b) > 0 and isinstance(b[0], str):
+                    txt = b[0]
                 if txt:
-                    yield txt, (pb or inherited_bbox or [])
+                    if not _bbox_valid(pb):
+                        pb = inherited_bbox if _bbox_valid(inherited_bbox) else []
+                    yield txt, pb
                     paired = True
-                    break
+            elif _is_poly_like(b):
+                pb = _poly_to_bbox(b)
+                if not _bbox_valid(pb):
+                    pb = _box_to_bbox(b)
+                txt = ""
+                if isinstance(a, str):
+                    txt = a
+                elif isinstance(a, (list, tuple)) and len(a) > 0 and isinstance(a[0], str):
+                    txt = a[0]
+                if txt:
+                    if not _bbox_valid(pb):
+                        pb = inherited_bbox if _bbox_valid(inherited_bbox) else []
+                    yield txt, pb
+                    paired = True
 
         if paired:
             return
 
         for it in obj:
             yield from _iter_ocr_items(it, inherited_bbox, zip_key_counts)
-
 
 def _normalize_anchor_text(text: str) -> str:
     t = unicodedata.normalize("NFKC", text or "")
@@ -790,12 +790,12 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                     seen_sample.add(text)
                     candidate_samples.append(text)
 
-            cand_key = (text, tuple(bbox) if bbox else ())
+            cand_key = (text, tuple(bbox) if _bbox_valid(bbox) else ())
             if cand_key in seen_candidate:
                 continue
             seen_candidate.add(cand_key)
 
-            if not bbox:
+            if not _bbox_valid(bbox):
                 continue
             bbox_item_count += 1
 
@@ -816,7 +816,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
     for src in bbox_sources:
         for node in _iter_dicts(src):
             bbox = _extract_bbox(node)
-            if not bbox:
+            if not _bbox_valid(bbox):
                 continue
             node_type = str(node.get("type") or "").lower()
             obj_type = ""
@@ -830,7 +830,10 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
 
     frag_anchors, frag_parts, frag_joined = _build_fragment_anchors(digit_fragments)
     for a in frag_anchors:
-        key = (a.get("n", -1), *(a.get("bbox") or []), a.get("text", ""))
+        a_bbox = a.get("bbox")
+        if not _bbox_valid(a_bbox):
+            continue
+        key = (a.get("n", -1), *a_bbox, a.get("text", ""))
         if key not in seen_anchor:
             seen_anchor.add(key)
             anchors.append(a)
@@ -1233,13 +1236,13 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             extra_debug = ""
             if bbox_item_count == 0:
                 if zip_keys_debug:
-                    extra_debug = f" zip_keys={_safe_debug_json(zip_keys_debug)}"
+                    extra_debug = f" zip_lens={_safe_debug_json(zip_keys_debug)}"
                 elif bbox_keys_debug:
                     extra_debug = f" bbox_keys={_safe_debug_json(bbox_keys_debug)}"
 
             print(
                 f"[debug] {page_name} candidates={int(candidate_count)} digit_candidates={int(digit_candidate_count)} bbox_items={int(bbox_item_count)} frag_count={int(frag_count)} matches={int(len(anchors))} "
-                f"sample_texts={_safe_debug_json(candidate_samples)} zip_keys={_safe_debug_json(zip_keys_debug)}{extra_debug}",
+                f"sample_texts={_safe_debug_json(candidate_samples)} zip_lens={_safe_debug_json(zip_keys_debug)}{extra_debug}",
                 file=sys.stderr,
                 flush=True,
             )
