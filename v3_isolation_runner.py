@@ -146,9 +146,10 @@ def _build_min_anchors(anchors: Any) -> List[Dict[str, Any]]:
             continue
         text = item.get("text") or item.get("id") or ""
         text_s = str(text).strip()
+        n_found = _find_anchor_number(text_s)
         m = _ANCHOR_RE.match(text_s.upper()) if text_s else None
-        n_val = -1
-        if m and m.group(2):
+        n_val = n_found if n_found is not None else -1
+        if n_val < 0 and m and m.group(2):
             try:
                 n_val = int(m.group(2))
             except Exception:
@@ -421,7 +422,73 @@ def _find_anchor_number(text: str) -> int | None:
     return None
 
 
-def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, List[str]]:
+def _digit_only(text: str) -> str:
+    return re.sub(r"\D", "", text or "")
+
+
+def _build_fragment_anchors(fragments: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str], str]:
+    if not fragments:
+        return [], [], ""
+
+    frags = sorted(fragments, key=lambda f: (f["yc"], f["bbox"][0]))
+    lines: List[List[Dict[str, Any]]] = []
+    for frag in frags:
+        if not lines:
+            lines.append([frag])
+            continue
+        last_line = lines[-1]
+        avg_y = sum(it["yc"] for it in last_line) / len(last_line)
+        if abs(frag["yc"] - avg_y) <= 14:
+            last_line.append(frag)
+        else:
+            lines.append([frag])
+
+    made: List[Dict[str, Any]] = []
+    dbg_parts: List[str] = []
+    dbg_joined = ""
+
+    for line in lines:
+        line.sort(key=lambda f: f["bbox"][0])
+        parts = [f["digits"] for f in line if f.get("digits")]
+        if not parts:
+            continue
+        joined = "".join(parts)
+        if len(joined) < 4:
+            continue
+
+        starts: List[int] = []
+        pos = 0
+        for part in parts:
+            starts.append(pos)
+            pos += len(part)
+
+        for m in re.finditer(r"(?<!\d)(\d{4})(?!\d)", joined):
+            n_val = int(m.group(1))
+            if n_val <= 0:
+                continue
+            s_idx, e_idx = m.start(1), m.end(1)
+            idxs = []
+            for i, st in enumerate(starts):
+                en = st + len(parts[i])
+                if not (en <= s_idx or st >= e_idx):
+                    idxs.append(i)
+            if not idxs:
+                continue
+            xs1=[]; ys1=[]; xs2=[]; ys2=[]
+            for i in idxs:
+                b=line[i]["bbox"]
+                xs1.append(b[0]); ys1.append(b[1]); xs2.append(b[2]); ys2.append(b[3])
+            bbox=[min(xs1), min(ys1), max(xs2), max(ys2)]
+            txt=m.group(1)
+            made.append({"id": txt, "text": txt, "n": n_val, "bbox": bbox, "col": 0})
+            if not dbg_parts:
+                dbg_parts = parts[:]
+                dbg_joined = joined
+
+    return made, dbg_parts[:5], dbg_joined
+
+
+def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, List[str], List[str], str]:
     anchors: List[Dict[str, Any]] = []
     objects: List[Dict[str, Any]] = []
     seen_anchor = set()
@@ -430,6 +497,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
     digit_candidate_count = 0
     candidate_samples: List[str] = []
     seen_sample = set()
+    digit_fragments: List[Dict[str, Any]] = []
 
     ocr_sources: List[Any] = []
     bbox_sources: List[Any] = []
@@ -450,8 +518,12 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
             text = _normalize_digit_candidate(text_raw)
             if _is_label_like_text(text):
                 continue
+            text = re.sub(r"\s+", "", text)
+            if not text:
+                continue
             candidate_text_count += 1
-            has_digit = any(ch.isdigit() for ch in text)
+            digits = _digit_only(text)
+            has_digit = bool(digits)
             if has_digit:
                 digit_candidate_count += 1
                 if len(candidate_samples) < 5 and text not in seen_sample:
@@ -460,6 +532,10 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
 
             if not bbox:
                 continue
+
+            if 1 <= len(digits) <= 3:
+                yc = (bbox[1] + bbox[3]) / 2.0
+                digit_fragments.append({"digits": digits, "bbox": bbox, "yc": yc})
 
             n_found = _find_anchor_number(text)
             m_col = _ANCHOR_RE.match(text.upper())
@@ -486,23 +562,15 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                     seen_obj.add(key)
                     objects.append({"type": obj_type, "bbox": bbox})
 
-    for src in bbox_sources:
-        for node in _iter_dicts(src):
-            bbox = _extract_bbox(node)
-            if not bbox:
-                continue
-            node_type = str(node.get("type") or "").lower()
-            obj_type = ""
-            if node_type in ("figure", "table"):
-                obj_type = node_type
-            if obj_type:
-                key = (obj_type, *bbox)
-                if key not in seen_obj:
-                    seen_obj.add(key)
-                    objects.append({"type": obj_type, "bbox": bbox})
+    frag_anchors, frag_parts, frag_joined = _build_fragment_anchors(digit_fragments)
+    for a in frag_anchors:
+        key = (a.get("n", -1), *(a.get("bbox") or []), a.get("text", ""))
+        if key not in seen_anchor:
+            seen_anchor.add(key)
+            anchors.append(a)
 
     anchors.sort(key=lambda a: (a.get("bbox", [0, 0, 0, 0])[1], a.get("bbox", [0, 0, 0, 0])[0]))
-    return anchors, objects, candidate_text_count, digit_candidate_count, candidate_samples
+    return anchors, objects, candidate_text_count, digit_candidate_count, candidate_samples, frag_parts, frag_joined
 
 
 def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
@@ -868,7 +936,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             first,
             keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
         )
-        anchors, objects, candidate_count, digit_candidate_count, candidate_samples = _extract_min_entities(pp_json, pp_obj)
+        anchors, objects, candidate_count, digit_candidate_count, candidate_samples, frag_parts, frag_joined = _extract_min_entities(pp_json, pp_obj)
         payload = {
             "ok": True,
             "page_file": page_name,
@@ -883,7 +951,9 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
         if pp_obj:
             payload["pp_obj"] = pp_obj
         print(
-            f"[debug] {page_name} candidates={candidate_count} digit_candidates={digit_candidate_count} matches={len(anchors)} sample_texts={json.dumps(candidate_samples, ensure_ascii=True)}",
+            f"[debug] {page_name} candidates={candidate_count} digit_candidates={digit_candidate_count} matches={len(anchors)} "
+            f"sample_texts={json.dumps(candidate_samples, ensure_ascii=True)} "
+            f"parts={json.dumps(frag_parts, ensure_ascii=True)} joined={json.dumps(frag_joined, ensure_ascii=True)}",
             file=sys.stderr,
             flush=True,
         )
