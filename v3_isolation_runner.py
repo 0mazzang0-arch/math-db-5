@@ -509,15 +509,6 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         # Fast tuning via value-only toggles (preserve full export structure).
         data["batch_size"] = 1
 
-        submodules = data.get("SubModules")
-        if isinstance(submodules, dict):
-            chart_module = submodules.get("ChartRecognition")
-            if isinstance(chart_module, dict):
-                # Keep block for schema stability, but force chart loader unavailable in fast profile.
-                chart_module["enabled"] = False
-                chart_module["use_chart_recognition"] = False
-                chart_module["model_dir"] = "__DISABLED__"
-
         subpipes = data.get("SubPipelines")
         if isinstance(subpipes, dict):
             doc_pre = subpipes.get("DocPreprocessor")
@@ -531,8 +522,11 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
                 g_sub = general_ocr.get("SubModules")
                 if isinstance(g_sub, dict):
                     text_det = g_sub.get("TextDetection")
-                    if isinstance(text_det, dict) and "limit_side_len" in text_det:
-                        text_det["limit_side_len"] = 512
+                    if isinstance(text_det, dict):
+                        if "limit_side_len" in text_det:
+                            text_det["limit_side_len"] = 512
+                        text_det["limit_type"] = "min"
+                        text_det["max_side_limit"] = 2400
 
         _dump_yaml_with_fallback(data, fast_yaml)
         if not _validate_fast_yaml_region_detection(fast_yaml):
@@ -804,7 +798,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("image_path", nargs="?", help="single image path (e.g., P001.png)")
     parser.add_argument("--pages_dir", required=False, help="directory containing P*.png files (batch mode)")
-    parser.add_argument("--dpi", type=int, default=250, help="reserved")
+    parser.add_argument("--dpi", type=int, default=200, help="reserved")
     parser.add_argument("--warmup", type=int, choices=[0, 1], default=1)
     parser.add_argument("--profile", choices=["fast", "full"], default="fast")
     parser.add_argument("--force_region_detection", type=int, choices=[-1, 0, 1], default=-1)

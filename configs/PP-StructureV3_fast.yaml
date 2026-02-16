@@ -2,11 +2,9 @@
 SubModules:
   ChartRecognition:
     batch_size: 1
-    model_dir: __DISABLED__
+    model_dir:
     model_name: PP-Chart2Table
     module_name: chart_recognition
-    enabled: false
-    use_chart_recognition: false
   LayoutDetection:
     batch_size: 8
     layout_merge_bboxes_mode:
@@ -97,7 +95,7 @@ SubPipelines:
         box_thresh: 0.6
         limit_side_len: 512
         limit_type: min
-        max_side_limit: 4000
+        max_side_limit: 2400
         model_dir:
         model_name: PP-OCRv5_server_det
         module_name: text_detection
