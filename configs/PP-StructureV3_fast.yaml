@@ -107,7 +107,7 @@ markdown_ignore_labels:
 - aside_text
 pipeline_name: PP-StructureV3
 use_chart_recognition: false
-use_doc_preprocessor: true
+use_doc_preprocessor: false
 use_formula_recognition: false
 use_region_detection: true
 use_seal_recognition: false

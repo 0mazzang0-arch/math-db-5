@@ -406,13 +406,40 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> None:
             for key in _FAST_DISABLE_KEYS:
                 updated = _replace_bool_line(updated, key, False)
             updated = _replace_bool_line(updated, "use_region_detection", True)
-            updated = _replace_bool_line(updated, "use_doc_preprocessor", True)
             out.append(updated)
 
         fast_yaml.write_text("\n".join(out) + "\n", encoding="utf-8")
         _stage(f"generated_fast_yaml {fast_yaml.name}")
     except Exception as e:
         _stage(f"make_fast_yaml_skip err={e}")
+
+
+def _sanitize_fast_yaml_doc_preprocessor(fast_cfg: Path) -> bool:
+    if not fast_cfg.exists():
+        return False
+    try:
+        lines = fast_cfg.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception as e:
+        _stage(f"fast_yaml_read_failed err={e}")
+        return False
+
+    changed = False
+    out: List[str] = []
+    for line in lines:
+        if re.match(r"^use_doc_preprocessor:\s*(true|True)\s*$", line):
+            out.append("use_doc_preprocessor: false")
+            changed = True
+            continue
+        out.append(line)
+
+    if changed:
+        try:
+            fast_cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
+            _stage("fast_yaml_sanity_fixed use_doc_preprocessor=false")
+        except Exception as e:
+            _stage(f"fast_yaml_sanity_write_failed err={e}")
+            return False
+    return changed
 
 
 def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> None:
@@ -429,6 +456,7 @@ def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> N
 
     _export_full_yaml_if_missing(full_cfg)
     _make_fast_yaml_from_full(full_cfg, fast_cfg)
+    _sanitize_fast_yaml_doc_preprocessor(fast_cfg)
     _stage(f"fast_yaml_regenerated exists={fast_cfg.exists()}")
 
 
@@ -445,10 +473,12 @@ def _load_engine(profile: str) -> Any:
             _make_fast_yaml_from_full(full_cfg, fast_cfg)
 
         if fast_cfg.exists():
+            _sanitize_fast_yaml_doc_preprocessor(fast_cfg)
             try:
                 return PPStructureV3(paddlex_config=str(fast_cfg))
             except Exception as e:
-                if "block_region_detection_model" not in str(e):
+                err_msg = str(e)
+                if "block_region_detection_model" not in err_msg and "doc_preprocessor_pipeline" not in err_msg:
                     raise
                 _recover_fast_yaml(full_cfg, fast_cfg, e)
                 _stage("fast_init_retry")
