@@ -325,6 +325,8 @@ def _extract_bbox(node: Dict[str, Any]) -> List[int]:
         or node.get("dt_bbox")
         or node.get("dt_box")
         or node.get("dt_boxes")
+        or node.get("rec_box")
+        or node.get("rec_boxes")
         or node.get("box")
         or node.get("boxes")
         or node.get("rect")
@@ -357,6 +359,8 @@ def _extract_bbox(node: Dict[str, Any]) -> List[int]:
         node.get("poly")
         or node.get("dt_poly")
         or node.get("dt_polys")
+        or node.get("rec_poly")
+        or node.get("rec_polys")
         or node.get("polygon")
         or node.get("points")
         or node.get("polys")
@@ -455,6 +459,28 @@ def _poly_to_bbox(poly: Any) -> List[int]:
     return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
 
 
+def _box_to_bbox(box: Any) -> List[int]:
+    if hasattr(box, "tolist"):
+        try:
+            box = box.tolist()
+        except Exception:
+            pass
+    if isinstance(box, dict):
+        return _extract_bbox(box)
+    if isinstance(box, (list, tuple)):
+        if len(box) == 4 and all(not isinstance(v, (list, tuple, dict)) for v in box):
+            try:
+                return [int(float(box[0])), int(float(box[1])), int(float(box[2])), int(float(box[3]))]
+            except Exception:
+                pass
+        return _poly_to_bbox(box)
+    return []
+
+
+def _is_poly_like(value: Any) -> bool:
+    return bool(_poly_to_bbox(value) or _box_to_bbox(value))
+
+
 def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None):
     if isinstance(obj, dict):
         cur_bbox = _extract_bbox(obj) or (inherited_bbox or [])
@@ -463,26 +489,78 @@ def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None):
         if text:
             yield text, cur_bbox
 
-        # Parallel OCR arrays: polys + texts
-        polys = obj.get("dt_polys") or obj.get("polys") or obj.get("boxes") or obj.get("dt_boxes")
-        texts = obj.get("rec_text") or obj.get("rec_res") or obj.get("texts") or obj.get("text")
-        if hasattr(polys, "tolist"):
-            try:
-                polys = polys.tolist()
-            except Exception:
-                pass
-        if hasattr(texts, "tolist"):
-            try:
-                texts = texts.tolist()
-            except Exception:
-                pass
-        if isinstance(polys, (list, tuple)) and isinstance(texts, (list, tuple)) and polys and texts:
-            for poly, txt in zip(polys, texts):
-                if isinstance(txt, str) and txt.strip():
-                    pb = _poly_to_bbox(poly) or cur_bbox
-                    yield txt, pb
+        # Parallel OCR arrays: boxes/polys + texts
+        def _arr(name: str) -> Any:
+            v = obj.get(name)
+            if hasattr(v, "tolist"):
+                try:
+                    v = v.tolist()
+                except Exception:
+                    pass
+            return v
 
-        skip_keys = {"dt_polys", "polys", "boxes", "dt_boxes", "rec_text", "rec_res", "texts", "text"} | _SKIP_HEAVY_KEYS
+        text_arr = None
+        text_key = ""
+        for k in ("rec_texts", "rec_text", "rec_text_list", "texts", "text", "rec_res"):
+            v = _arr(k)
+            if isinstance(v, (list, tuple)) and v and all(isinstance(x, str) for x in v):
+                text_arr = v
+                text_key = k
+                break
+
+        pair_consumed = False
+        paired_keys: set[str] = set()
+        if text_arr is not None:
+            box_arr = None
+            box_key = ""
+            for k in ("rec_boxes", "dt_boxes", "boxes", "bboxes", "dt_bboxes"):
+                v = _arr(k)
+                if isinstance(v, (list, tuple)) and len(v) > 0:
+                    box_arr = v
+                    box_key = k
+                    break
+            poly_arr = None
+            poly_key = ""
+            for k in ("rec_polys", "dt_polys", "polys", "dt_poly"):
+                v = _arr(k)
+                if isinstance(v, (list, tuple)) and len(v) > 0:
+                    poly_arr = v
+                    poly_key = k
+                    break
+
+            if box_arr is not None:
+                for txt, box in zip(text_arr, box_arr):
+                    if isinstance(txt, str) and txt.strip():
+                        yield txt, (_box_to_bbox(box) or cur_bbox)
+                pair_consumed = True
+                paired_keys.update({text_key, box_key})
+            elif poly_arr is not None:
+                for txt, poly in zip(text_arr, poly_arr):
+                    if isinstance(txt, str) and txt.strip():
+                        yield txt, (_poly_to_bbox(poly) or cur_bbox)
+                pair_consumed = True
+                paired_keys.update({text_key, poly_key})
+
+        skip_keys = {
+            "dt_polys",
+            "polys",
+            "boxes",
+            "dt_boxes",
+            "rec_text",
+            "rec_texts",
+            "rec_text_list",
+            "rec_res",
+            "texts",
+            "text",
+            "rec_boxes",
+            "bboxes",
+            "dt_bboxes",
+            "rec_polys",
+            "dt_poly",
+            "rec_poly",
+        } | _SKIP_HEAVY_KEYS
+        if pair_consumed:
+            skip_keys |= paired_keys
         for k, v in obj.items():
             if k in skip_keys:
                 continue
@@ -496,7 +574,9 @@ def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None):
             a, b = obj[0], obj[1]
             candidates = [(a, b), (b, a)]
             for poly_like, text_like in candidates:
-                pb = _poly_to_bbox(poly_like)
+                if not _is_poly_like(poly_like):
+                    continue
+                pb = _poly_to_bbox(poly_like) or _box_to_bbox(poly_like)
                 txt = ""
                 if isinstance(text_like, str):
                     txt = text_like
