@@ -415,6 +415,23 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> None:
         _stage(f"make_fast_yaml_skip err={e}")
 
 
+def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> None:
+    _stage(f"fast_init_failed err={init_err}")
+    removed = False
+    try:
+        if fast_cfg.exists():
+            fast_cfg.unlink()
+            removed = True
+    except Exception as e:
+        _stage(f"fast_yaml_remove_failed err={e}")
+    else:
+        _stage(f"fast_yaml_removed={removed}")
+
+    _export_full_yaml_if_missing(full_cfg)
+    _make_fast_yaml_from_full(full_cfg, fast_cfg)
+    _stage(f"fast_yaml_regenerated exists={fast_cfg.exists()}")
+
+
 def _load_engine(profile: str) -> Any:
     from paddleocr import PPStructureV3
 
@@ -423,13 +440,23 @@ def _load_engine(profile: str) -> Any:
 
     if profile == "fast":
         if not fast_cfg.exists():
+            _stage("fast_yaml_missing regenerate")
             _export_full_yaml_if_missing(full_cfg)
             _make_fast_yaml_from_full(full_cfg, fast_cfg)
+
+        if fast_cfg.exists():
+            try:
+                return PPStructureV3(paddlex_config=str(fast_cfg))
+            except Exception as e:
+                if "block_region_detection_model" not in str(e):
+                    raise
+                _recover_fast_yaml(full_cfg, fast_cfg, e)
+                _stage("fast_init_retry")
+                return PPStructureV3(paddlex_config=str(fast_cfg))
+
     elif profile == "full" and not full_cfg.exists():
         _export_full_yaml_if_missing(full_cfg)
 
-    if profile == "fast" and fast_cfg.exists():
-        return PPStructureV3(paddlex_config=str(fast_cfg))
     if profile == "full" and full_cfg.exists():
         return PPStructureV3(paddlex_config=str(full_cfg))
     return PPStructureV3()
