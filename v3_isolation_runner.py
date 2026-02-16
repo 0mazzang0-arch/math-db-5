@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import time
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -13,15 +14,6 @@ _LAST_EMIT_MS = 0.0
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "configs"
 _ANCHOR_RE = re.compile(r"^\s*([A-C])\s*([0-9]{1,3})?\s*$")
-_FAST_DISABLE_KEYS = {
-    "use_table_recognition",
-    "use_formula_recognition",
-    "use_chart_recognition",
-    "use_seal_recognition",
-    "use_doc_unwarping",
-    "use_doc_orientation_classify",
-    "use_textline_orientation",
-}
 _PAYLOAD_DROP_KEYS = {"img", "image", "dummy", "pixels", "raw", "page_bytes", "file_bytes", "input"}
 _PAYLOAD_BASE_KEYS = {
     "ok",
@@ -354,64 +346,156 @@ def _export_full_yaml_if_missing(full_yaml: Path) -> None:
         _stage(f"export_full_yaml_skip err={e}")
 
 
-def _replace_bool_line(line: str, key: str, value: bool) -> str:
-    m = re.match(rf"^(\s*){re.escape(key)}\s*:\s*(true|false|True|False)(\s*(#.*)?)$", line)
-    if not m:
-        return line
-    return f"{m.group(1)}{key}: {'true' if value else 'false'}{m.group(3) or ''}"
-
-
-def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> None:
-    if not full_yaml.exists():
-        return
+def _load_yaml_with_fallback(path: Path) -> Dict[str, Any]:
     try:
-        lines = full_yaml.read_text(encoding="utf-8", errors="replace").splitlines()
-        out: List[str] = []
+        import yaml  # type: ignore
 
-        in_submodules = False
-        in_subpipelines = False
-        skip_block_indent: int | None = None
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:
+        ruby_script = (
+            "require 'yaml'; require 'json'; "
+            "obj = YAML.safe_load(File.read(ARGV[0]), aliases: true) || {}; "
+            "puts JSON.generate(obj)"
+        )
+        proc = subprocess.run(
+            ["ruby", "-e", ruby_script, str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or "ruby yaml load failed")
+        loaded = json.loads(proc.stdout)
+        return loaded if isinstance(loaded, dict) else {}
 
-        for line in lines:
-            indent = len(line) - len(line.lstrip(" "))
 
-            if skip_block_indent is not None:
-                if indent > skip_block_indent:
-                    continue
-                skip_block_indent = None
+def _dump_yaml_with_fallback(data: Dict[str, Any], path: Path) -> None:
+    try:
+        import yaml  # type: ignore
 
-            if indent == 0 and re.match(r"^SubModules:\s*$", line):
-                in_submodules = True
-                in_subpipelines = False
-            elif indent == 0 and re.match(r"^SubPipelines:\s*$", line):
-                in_submodules = False
-                in_subpipelines = True
-            elif indent == 0:
-                in_submodules = False
-                in_subpipelines = False
+        path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=False), encoding="utf-8")
+        return
+    except Exception:
+        ruby_script = (
+            "require 'yaml'; require 'json'; "
+            "obj = JSON.parse(STDIN.read); "
+            "File.write(ARGV[0], YAML.dump(obj))"
+        )
+        proc = subprocess.run(
+            ["ruby", "-e", ruby_script, str(path)],
+            input=json.dumps(data, ensure_ascii=True),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or "ruby yaml dump failed")
 
-            if in_submodules and indent == 2 and re.match(r"^\s*ChartRecognition:\s*$", line):
-                skip_block_indent = indent
-                continue
 
-            if in_subpipelines and indent == 2 and re.match(r"^\s*(TableRecognition|FormulaRecognition|SealRecognition):\s*$", line):
-                skip_block_indent = indent
-                continue
+def _validate_fast_yaml_region_detection(fast_yaml: Path) -> bool:
+    try:
+        data = _load_yaml_with_fallback(fast_yaml)
+    except Exception as e:
+        _stage(f"fast_yaml_validate_read_failed err={e}")
+        return False
 
-            if indent == 6 and re.match(r"^\s*TextLineOrientation:\s*$", line):
-                skip_block_indent = indent
-                continue
+    submodules = data.get("SubModules") if isinstance(data, dict) else None
+    region = submodules.get("RegionDetection") if isinstance(submodules, dict) else None
+    if not isinstance(region, dict):
+        _stage("fast_yaml_validate_missing RegionDetection")
+        return False
 
-            updated = line
-            for key in _FAST_DISABLE_KEYS:
-                updated = _replace_bool_line(updated, key, False)
-            updated = _replace_bool_line(updated, "use_region_detection", True)
-            out.append(updated)
+    required_keys = ["model_name", "module_name", "model_dir"]
+    missing = [k for k in required_keys if k not in region]
+    if missing:
+        _stage(f"fast_yaml_validate_missing_keys {','.join(missing)}")
+        return False
+    return True
 
-        fast_yaml.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
+    if not full_yaml.exists():
+        _stage("make_fast_yaml_skip full_yaml_missing")
+        return False
+    try:
+        data = _load_yaml_with_fallback(full_yaml)
+        if not isinstance(data, dict) or not data:
+            _stage("make_fast_yaml_skip full_yaml_invalid")
+            return False
+
+        data["use_table_recognition"] = False
+        data["use_formula_recognition"] = False
+        data["use_chart_recognition"] = False
+        data["use_seal_recognition"] = False
+        data["use_region_detection"] = True
+
+        subpipelines = data.get("SubPipelines") if isinstance(data.get("SubPipelines"), dict) else None
+        if isinstance(subpipelines, dict):
+            doc_prep = subpipelines.get("DocPreprocessor")
+            if isinstance(doc_prep, dict):
+                if "use_doc_orientation_classify" in doc_prep:
+                    doc_prep["use_doc_orientation_classify"] = False
+                if "use_doc_unwarping" in doc_prep:
+                    doc_prep["use_doc_unwarping"] = False
+
+        _dump_yaml_with_fallback(data, fast_yaml)
+        if not _validate_fast_yaml_region_detection(fast_yaml):
+            _stage("make_fast_yaml_skip validation_failed")
+            return False
+
         _stage(f"generated_fast_yaml {fast_yaml.name}")
+        return True
     except Exception as e:
         _stage(f"make_fast_yaml_skip err={e}")
+        return False
+
+
+def _sanitize_fast_yaml_doc_preprocessor(fast_cfg: Path) -> bool:
+    if not fast_cfg.exists():
+        return False
+    try:
+        lines = fast_cfg.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception as e:
+        _stage(f"fast_yaml_read_failed err={e}")
+        return False
+
+    changed = False
+    out: List[str] = []
+    for line in lines:
+        if re.match(r"^use_doc_preprocessor:\s*(true|True)\s*$", line):
+            out.append("use_doc_preprocessor: false")
+            changed = True
+            continue
+        out.append(line)
+
+    if changed:
+        try:
+            fast_cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
+            _stage("fast_yaml_sanity_fixed use_doc_preprocessor=false")
+        except Exception as e:
+            _stage(f"fast_yaml_sanity_write_failed err={e}")
+            return False
+    return changed
+
+
+def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> None:
+    _stage(f"fast_init_failed err={init_err}")
+    removed = False
+    try:
+        if fast_cfg.exists():
+            fast_cfg.unlink()
+            removed = True
+    except Exception as e:
+        _stage(f"fast_yaml_remove_failed err={e}")
+    else:
+        _stage(f"fast_yaml_removed={removed}")
+
+    _export_full_yaml_if_missing(full_cfg)
+    made = _make_fast_yaml_from_full(full_cfg, fast_cfg)
+    if made:
+        _sanitize_fast_yaml_doc_preprocessor(fast_cfg)
+    _stage(f"fast_yaml_regenerated exists={fast_cfg.exists()}")
 
 
 def _sanitize_fast_yaml_doc_preprocessor(fast_cfg: Path) -> bool:
@@ -470,19 +554,31 @@ def _load_engine(profile: str) -> Any:
         if not fast_cfg.exists():
             _stage("fast_yaml_missing regenerate")
             _export_full_yaml_if_missing(full_cfg)
-            _make_fast_yaml_from_full(full_cfg, fast_cfg)
+            created = _make_fast_yaml_from_full(full_cfg, fast_cfg)
+            if not created:
+                _stage("fast_yaml_generate_failed fallback_full")
 
         if fast_cfg.exists():
             _sanitize_fast_yaml_doc_preprocessor(fast_cfg)
-            try:
-                return PPStructureV3(paddlex_config=str(fast_cfg))
-            except Exception as e:
-                err_msg = str(e)
-                if "block_region_detection_model" not in err_msg and "doc_preprocessor_pipeline" not in err_msg:
-                    raise
-                _recover_fast_yaml(full_cfg, fast_cfg, e)
-                _stage("fast_init_retry")
-                return PPStructureV3(paddlex_config=str(fast_cfg))
+            if not _validate_fast_yaml_region_detection(fast_cfg):
+                _stage("fast_yaml_invalid fallback_full")
+            else:
+                try:
+                    return PPStructureV3(paddlex_config=str(fast_cfg))
+                except Exception as e:
+                    err_msg = str(e)
+                    if "block_region_detection_model" not in err_msg and "doc_preprocessor_pipeline" not in err_msg:
+                        raise
+                    _recover_fast_yaml(full_cfg, fast_cfg, e)
+                    _stage("fast_init_retry")
+                    if fast_cfg.exists() and _validate_fast_yaml_region_detection(fast_cfg):
+                        return PPStructureV3(paddlex_config=str(fast_cfg))
+                    _stage("fast_yaml_retry_invalid fallback_full")
+
+        _export_full_yaml_if_missing(full_cfg)
+        if full_cfg.exists():
+            _stage("fast_fallback_to_full_config")
+            return PPStructureV3(paddlex_config=str(full_cfg))
 
     elif profile == "full" and not full_cfg.exists():
         _export_full_yaml_if_missing(full_cfg)
