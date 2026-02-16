@@ -443,12 +443,35 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
             _stage("make_fast_yaml_skip full_yaml_invalid")
             return False
 
-        # Change only top-level switches for fast profile.
+        # Top-level fast switches.
         data["use_table_recognition"] = False
         data["use_formula_recognition"] = False
         data["use_chart_recognition"] = False
         data["use_seal_recognition"] = False
         data["use_region_detection"] = True
+
+        # Remove optional heavy loaders for fast.
+        submodules = data.get("SubModules")
+        if isinstance(submodules, dict):
+            submodules.pop("ChartRecognition", None)
+
+        subpipes = data.get("SubPipelines")
+        if isinstance(subpipes, dict):
+            subpipes.pop("TableRecognition", None)
+            subpipes.pop("FormulaRecognition", None)
+            subpipes.pop("SealRecognition", None)
+
+            doc_pre = subpipes.get("DocPreprocessor")
+            if isinstance(doc_pre, dict):
+                doc_pre["use_doc_orientation_classify"] = False
+                doc_pre["use_doc_unwarping"] = False
+
+            general_ocr = subpipes.get("GeneralOCR")
+            if isinstance(general_ocr, dict):
+                general_ocr["use_textline_orientation"] = False
+                g_sub = general_ocr.get("SubModules")
+                if isinstance(g_sub, dict):
+                    g_sub.pop("TextLineOrientation", None)
 
         _dump_yaml_with_fallback(data, fast_yaml)
         if not _validate_fast_yaml_region_detection(fast_yaml):
