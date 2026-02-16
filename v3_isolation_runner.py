@@ -340,6 +340,48 @@ def _extract_text(node: Dict[str, Any]) -> str:
     return ""
 
 
+def _poly_to_bbox(poly: Any) -> List[int]:
+    if not isinstance(poly, (list, tuple)):
+        return []
+    pts: List[Tuple[float, float]] = []
+    for p in poly:
+        if isinstance(p, (list, tuple)) and len(p) >= 2:
+            try:
+                pts.append((float(p[0]), float(p[1])))
+            except Exception:
+                pass
+    if not pts:
+        return []
+    xs = [x for x, _ in pts]
+    ys = [y for _, y in pts]
+    return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+
+
+def _iter_ocr_items(obj: Any):
+    if isinstance(obj, dict):
+        text = _extract_text(obj)
+        if text:
+            yield text, _extract_bbox(obj)
+        for v in obj.values():
+            yield from _iter_ocr_items(v)
+        return
+
+    if isinstance(obj, (list, tuple)):
+        # PaddleOCR-like tuples: [poly_points, (text, score)] or [poly_points, text]
+        if len(obj) >= 2:
+            bbox = _poly_to_bbox(obj[0])
+            second = obj[1]
+            text = ""
+            if isinstance(second, str):
+                text = second
+            elif isinstance(second, (list, tuple)) and second and isinstance(second[0], str):
+                text = second[0]
+            if text:
+                yield text, bbox
+        for it in obj:
+            yield from _iter_ocr_items(it)
+
+
 def _normalize_anchor_text(text: str) -> str:
     t = unicodedata.normalize("NFKC", text or "")
     return " ".join(t.strip().split())
@@ -404,8 +446,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
         ocr_sources.append(pp_json)
 
     for src in ocr_sources:
-        for node in _iter_dicts(src):
-            text_raw = _extract_text(node)
+        for text_raw, bbox in _iter_ocr_items(src):
             text = _normalize_digit_candidate(text_raw)
             if _is_label_like_text(text):
                 continue
@@ -417,7 +458,6 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                     seen_sample.add(text)
                     candidate_samples.append(text)
 
-            bbox = _extract_bbox(node)
             if not bbox:
                 continue
 
@@ -431,14 +471,15 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                     seen_anchor.add(key)
                     anchors.append({"id": anchor_text, "text": anchor_text, "n": n_val, "bbox": bbox, "col": 0})
 
-            low = text.lower()
+    for src in bbox_sources:
+        for node in _iter_dicts(src):
+            bbox = _extract_bbox(node)
+            if not bbox:
+                continue
+            node_type = str(node.get("type") or "").lower()
             obj_type = ""
-            if any(t in low for t in ["figure", "fig", "image", "photo"]):
-                obj_type = "figure"
-            elif any(t in low for t in ["table", "tbl"]):
-                obj_type = "table"
-            elif node.get("type") in ("figure", "table"):
-                obj_type = str(node.get("type"))
+            if node_type in ("figure", "table"):
+                obj_type = node_type
             if obj_type:
                 key = (obj_type, *bbox)
                 if key not in seen_obj:
