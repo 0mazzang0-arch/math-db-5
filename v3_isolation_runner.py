@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import time
+import traceback
 import subprocess
 import unicodedata
 from pathlib import Path
@@ -90,6 +91,28 @@ def _converter(obj: Any) -> Any:
     if isinstance(obj, Path):
         return str(obj)
     return repr(obj)
+
+
+def _safe_debug_json(value: Any) -> str:
+    try:
+        return json.dumps(_sanitize_value(value), ensure_ascii=True, default=_converter)
+    except Exception:
+        try:
+            return str(value)
+        except Exception:
+            return '"<unprintable>"'
+
+
+def _to_builtin_int_map(data: Any) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    if not isinstance(data, dict):
+        return out
+    for k, v in data.items():
+        try:
+            out[str(k)] = int(v)
+        except Exception:
+            continue
+    return out
 
 
 def _sanitize_value(value: Any) -> Any:
@@ -177,6 +200,11 @@ def _build_min_payload(payload: Dict[str, Any], fallback_page_file: str) -> Dict
     out.setdefault("stage", payload.get("stage", "predict_done"))
     out.setdefault("profile", payload.get("profile", "fast"))
     out.setdefault("ok", bool(payload.get("ok", False)))
+    if not bool(out.get("ok", False)):
+        if "err" in payload:
+            out["err"] = str(payload.get("err"))
+        if "exc_type" in payload:
+            out["exc_type"] = str(payload.get("exc_type"))
     return out
 
 
@@ -1200,27 +1228,38 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             except Exception:
                 bbox_keys_debug = []
 
-        extra_debug = ""
-        if bbox_item_count == 0:
-            if zip_key_counts:
-                extra_debug = f" zip_keys={json.dumps(zip_key_counts, ensure_ascii=True)}"
-            elif bbox_keys_debug:
-                extra_debug = f" bbox_keys={json.dumps(bbox_keys_debug, ensure_ascii=True)}"
+        try:
+            zip_keys_debug = _to_builtin_int_map(zip_key_counts)
+            extra_debug = ""
+            if bbox_item_count == 0:
+                if zip_keys_debug:
+                    extra_debug = f" zip_keys={_safe_debug_json(zip_keys_debug)}"
+                elif bbox_keys_debug:
+                    extra_debug = f" bbox_keys={_safe_debug_json(bbox_keys_debug)}"
 
-        print(
-            f"[debug] {page_name} candidates={candidate_count} digit_candidates={digit_candidate_count} bbox_items={bbox_item_count} frag_count={frag_count} matches={len(anchors)} "
-            f"sample_texts={json.dumps(candidate_samples, ensure_ascii=True)}{extra_debug}",
-            file=sys.stderr,
-            flush=True,
-        )
+            print(
+                f"[debug] {page_name} candidates={int(candidate_count)} digit_candidates={int(digit_candidate_count)} bbox_items={int(bbox_item_count)} frag_count={int(frag_count)} matches={int(len(anchors))} "
+                f"sample_texts={_safe_debug_json(candidate_samples)} zip_keys={_safe_debug_json(zip_keys_debug)}{extra_debug}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception as dbg_e:
+            print(f"[debug] {page_name} debug_emit_failed={dbg_e}", file=sys.stderr, flush=True)
         return payload
     except Exception as e:
         t_page_ms = (time.perf_counter() - page_start) * 1000.0
+        exc_type = e.__class__.__name__
+        print(f"[error] {page_name} {exc_type}: {e}", file=sys.stderr, flush=True)
+        try:
+            traceback.print_exc(file=sys.stderr)
+        except Exception:
+            pass
         return {
             "ok": False,
             "page_file": page_name,
             "stage": "runner_loop",
             "err": str(e),
+            "exc_type": exc_type,
             "t_init_ms": round(t_init_ms, 3),
             "t_predict_ms": round(t_page_ms, 3),
             "t_page_ms": round(t_page_ms, 3),
