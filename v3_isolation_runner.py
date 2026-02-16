@@ -34,6 +34,7 @@ _MAX_LIST_LEN = 2000
 _MAX_DICT_KEYS = 200
 _MAX_DUMP_CHARS = 200 * 1024
 _MAX_MIN_ANCHORS = 50
+_SKIP_HEAVY_KEYS = {"img", "image", "pixels", "raw", "mask", "score_map", "heatmap", "bitmap", "input"}
 _QUIET = False
 _JSONL_OUT_PATH = ""
 
@@ -164,9 +165,14 @@ def _build_min_payload(payload: Dict[str, Any], fallback_page_file: str) -> Dict
             out[key] = payload[key]
 
     anchors_min = _build_min_anchors(payload.get("anchors"))
+    out["anchors"] = anchors_min
     out["anchors_count"] = len(anchors_min)
-    if anchors_min:
-        out["anchors"] = anchors_min
+
+    objects_min = payload.get("objects")
+    if isinstance(objects_min, list):
+        out["objects"] = _sanitize_value(objects_min[:_MAX_MIN_ANCHORS])
+    else:
+        out["objects"] = []
 
     out.setdefault("stage", payload.get("stage", "predict_done"))
     out.setdefault("profile", payload.get("profile", "fast"))
@@ -314,19 +320,47 @@ def _iter_dicts(obj: Any):
 
 
 def _extract_bbox(node: Dict[str, Any]) -> List[int]:
-    cand = node.get("bbox") or node.get("box") or node.get("rect")
+    cand = (
+        node.get("bbox")
+        or node.get("dt_bbox")
+        or node.get("dt_box")
+        or node.get("dt_boxes")
+        or node.get("box")
+        or node.get("boxes")
+        or node.get("rect")
+    )
+    if isinstance(cand, dict):
+        if all(k in cand for k in ("x", "y", "w", "h")):
+            try:
+                x, y, w, h = float(cand["x"]), float(cand["y"]), float(cand["w"]), float(cand["h"])
+                return [int(x), int(y), int(x + w), int(y + h)]
+            except Exception:
+                pass
+        if all(k in cand for k in ("left", "top", "right", "bottom")):
+            try:
+                return [int(float(cand["left"])), int(float(cand["top"])), int(float(cand["right"])), int(float(cand["bottom"]))]
+            except Exception:
+                pass
+
     if hasattr(cand, "tolist"):
         try:
             cand = cand.tolist()
         except Exception:
             pass
-    if isinstance(cand, (list, tuple)) and len(cand) == 4:
+    if isinstance(cand, (list, tuple)) and len(cand) == 4 and all(not isinstance(x, (list, tuple, dict)) for x in cand):
         try:
             return [int(float(cand[0])), int(float(cand[1])), int(float(cand[2])), int(float(cand[3]))]
         except Exception:
             pass
 
-    poly = node.get("poly") or node.get("polygon") or node.get("points")
+    poly = (
+        node.get("poly")
+        or node.get("dt_poly")
+        or node.get("dt_polys")
+        or node.get("polygon")
+        or node.get("points")
+        or node.get("polys")
+    )
     if hasattr(poly, "tolist"):
         try:
             poly = poly.tolist()
@@ -334,7 +368,7 @@ def _extract_bbox(node: Dict[str, Any]) -> List[int]:
             pass
     if isinstance(poly, (list, tuple)) and len(poly) >= 4:
         # flatten form: [x1,y1,x2,y2,...]
-        if all(not isinstance(it, (list, tuple)) for it in poly):
+        if all(not isinstance(it, (list, tuple, dict)) for it in poly):
             nums = []
             for it in poly:
                 try:
@@ -398,7 +432,7 @@ def _iter_ocr_items(obj: Any):
 
         # Parallel OCR arrays: polys + texts
         polys = obj.get("dt_polys") or obj.get("polys") or obj.get("boxes")
-        texts = obj.get("rec_text") or obj.get("texts") or obj.get("text")
+        texts = obj.get("rec_text") or obj.get("rec_res") or obj.get("texts") or obj.get("text")
         if hasattr(polys, "tolist"):
             try:
                 polys = polys.tolist()
@@ -414,7 +448,7 @@ def _iter_ocr_items(obj: Any):
                 if isinstance(txt, str) and txt.strip():
                     yield txt, _poly_to_bbox(poly)
 
-        skip_keys = {"dt_polys", "polys", "boxes", "rec_text", "texts", "text"}
+        skip_keys = {"dt_polys", "polys", "boxes", "dt_boxes", "rec_text", "rec_res", "texts", "text"} | _SKIP_HEAVY_KEYS
         for k, v in obj.items():
             if k in skip_keys:
                 continue
@@ -731,6 +765,11 @@ def _export_full_yaml_if_missing(full_yaml: Path) -> None:
         _stage(f"full_yaml_export_invalid err={reason2}")
         raise RuntimeError(reason2)
 
+    cfg2 = _load_yaml_with_fallback(full_yaml)
+    ok2, reason2 = _validate_export_schema(cfg2, "full_yaml_exported")
+    if not ok2:
+        _stage(f"full_yaml_export_invalid err={reason2}")
+        raise RuntimeError(reason2)
 
 def _load_yaml_with_fallback(path: Path) -> Dict[str, Any]:
     try:
@@ -1024,10 +1063,23 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
         }
         if pp_obj:
             payload["pp_obj"] = pp_obj
+        bbox_keys_debug: List[str] = []
+        if bbox_item_count == 0:
+            try:
+                for node in _iter_dicts(pp_obj):
+                    if isinstance(node, dict):
+                        keys = [k for k in node.keys() if any(t in str(k).lower() for t in ("bbox", "box", "poly", "points", "dt_", "rec_text", "text"))]
+                        if keys:
+                            bbox_keys_debug = sorted(list(dict.fromkeys(str(k) for k in keys)))[:8]
+                            break
+            except Exception:
+                bbox_keys_debug = []
+
         print(
             f"[debug] {page_name} candidates={candidate_count} digit_candidates={digit_candidate_count} frag_count={frag_count} bbox_items={bbox_item_count} matches={len(anchors)} "
             f"sample_texts={json.dumps(candidate_samples, ensure_ascii=True)} "
-            f"parts={json.dumps(frag_parts, ensure_ascii=True)} joined={json.dumps(frag_joined, ensure_ascii=True)}",
+            f"parts={json.dumps(frag_parts, ensure_ascii=True)} joined={json.dumps(frag_joined, ensure_ascii=True)} "
+            f"bbox_keys={json.dumps(bbox_keys_debug, ensure_ascii=True)}",
             file=sys.stderr,
             flush=True,
         )
