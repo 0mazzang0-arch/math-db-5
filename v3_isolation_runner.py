@@ -419,7 +419,14 @@ def _validate_fast_yaml_region_detection(fast_yaml: Path) -> bool:
         _stage(f"fast_yaml_validate_read_failed err={e}")
         return False
 
-    submodules = data.get("SubModules") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        _stage("fast_yaml_validate_invalid_root")
+        return False
+    if "SubModules" not in data or not isinstance(data.get("SubModules"), dict):
+        _stage("fast_yaml_validate_missing SubModules")
+        return False
+
+    submodules = data.get("SubModules")
     region = submodules.get("RegionDetection") if isinstance(submodules, dict) else None
     if not isinstance(region, dict):
         _stage("fast_yaml_validate_missing RegionDetection")
@@ -429,6 +436,14 @@ def _validate_fast_yaml_region_detection(fast_yaml: Path) -> bool:
     missing = [k for k in required_keys if k not in region]
     if missing:
         _stage(f"fast_yaml_validate_missing_keys {','.join(missing)}")
+        return False
+
+    if region.get("model_name") != "PP-DocBlockLayout":
+        _stage(f"fast_yaml_validate_bad_model_name got={region.get('model_name')}")
+        return False
+
+    if not region.get("module_name"):
+        _stage("fast_yaml_validate_missing module_name")
         return False
     return True
 
@@ -516,7 +531,10 @@ def _load_engine(profile: str) -> Any:
             _stage("fast_yaml_missing regenerate")
             _export_full_yaml_if_missing(full_cfg)
             if not _make_fast_yaml_from_full(full_cfg, fast_cfg):
-                raise RuntimeError("fast_yaml_generate_failed")
+                _stage("fast_yaml_generate_failed retry_once")
+                _delete_fast_yaml(fast_cfg, "generate_failed_first")
+                if not _make_fast_yaml_from_full(full_cfg, fast_cfg):
+                    raise RuntimeError("fast_yaml_generate_failed")
 
         if not _validate_fast_yaml_region_detection(fast_cfg):
             _delete_fast_yaml(fast_cfg, "region_validation_failed")
@@ -527,7 +545,25 @@ def _load_engine(profile: str) -> Any:
         except Exception as e:
             _stage(f"fast_yaml_load_failed err={e}")
             _delete_fast_yaml(fast_cfg, "load_failed")
-            raise RuntimeError(f"fast_init_failed: {e}") from e
+
+            _stage("fast_yaml_recover regenerate_and_retry")
+            _export_full_yaml_if_missing(full_cfg)
+            if not _make_fast_yaml_from_full(full_cfg, fast_cfg):
+                _stage("fast_yaml_recover_generate_failed retry_once")
+                _delete_fast_yaml(fast_cfg, "recover_generate_failed_first")
+                if not _make_fast_yaml_from_full(full_cfg, fast_cfg):
+                    raise RuntimeError("fast_yaml_recover_generate_failed") from e
+            if not _validate_fast_yaml_region_detection(fast_cfg):
+                _delete_fast_yaml(fast_cfg, "recover_region_validation_failed")
+                raise RuntimeError("fast_yaml_recover_invalid_region_detection") from e
+
+            try:
+                _stage("fast_yaml_recover_retry")
+                return PPStructureV3(paddlex_config=str(fast_cfg))
+            except Exception as retry_err:
+                _stage(f"fast_yaml_recover_retry_failed err={retry_err}")
+                _delete_fast_yaml(fast_cfg, "recover_retry_load_failed")
+                raise RuntimeError(f"fast_init_failed: {retry_err}") from retry_err
 
     elif profile == "full" and not full_cfg.exists():
         _export_full_yaml_if_missing(full_cfg)
