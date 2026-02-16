@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "configs"
 _ANCHOR_RE = re.compile(r"^\s*([A-C])\s*([0-9]{1,3})?\s*$")
 _LEADING_NUM_RE = re.compile(r"^\s*(\d{4})(?=[\s\.\)\]]|$)")
+_LABEL_LIKE_TEXTS = {"text", "footer", "formula", "number", "header", "image", "table", "figure", "caption", "title", "reference", "equation"}
 _PAYLOAD_DROP_KEYS = {"img", "image", "dummy", "pixels", "raw", "page_bytes", "file_bytes", "input"}
 _MIN_PAYLOAD_KEYS = {
     "ok",
@@ -331,7 +332,7 @@ def _extract_bbox(node: Dict[str, Any]) -> List[int]:
 
 
 def _extract_text(node: Dict[str, Any]) -> str:
-    for k in ("text", "rec_text", "transcription", "label", "cls", "type", "content"):
+    for k in ("text", "rec_text", "transcription", "ocr", "line"):
         v = node.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()
@@ -343,6 +344,13 @@ def _normalize_anchor_text(text: str) -> str:
     return " ".join(t.strip().split())
 
 
+def _is_label_like_text(text: str) -> bool:
+    if not text:
+        return True
+    low = text.lower().strip()
+    return low in _LABEL_LIKE_TEXTS
+
+
 def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, List[str]]:
     anchors: List[Dict[str, Any]] = []
     objects: List[Dict[str, Any]] = []
@@ -352,32 +360,36 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
     candidate_samples: List[str] = []
     seen_sample = set()
 
-    sources: List[Any] = []
+    ocr_sources: List[Any] = []
+    bbox_sources: List[Any] = []
     if isinstance(pp_obj, dict):
-        for key in ("overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"):
+        for key in ("overall_ocr_res", "parsing_res_list"):
             if key in pp_obj:
-                sources.append(pp_obj.get(key))
-        sources.append(pp_obj)
+                ocr_sources.append(pp_obj.get(key))
+        for key in ("layout_det_res", "region_det_res"):
+            if key in pp_obj:
+                bbox_sources.append(pp_obj.get(key))
     if isinstance(pp_json, dict):
         if "res" in pp_json:
-            sources.append(pp_json.get("res"))
-        sources.append(pp_json)
+            ocr_sources.append(pp_json.get("res"))
+        ocr_sources.append(pp_json)
 
-    for src in sources:
+    for src in ocr_sources:
         for node in _iter_dicts(src):
             text = _normalize_anchor_text(_extract_text(node))
-            if text:
-                candidate_text_count += 1
-                if len(candidate_samples) < 5 and text not in seen_sample:
-                    seen_sample.add(text)
-                    candidate_samples.append(text)
+            if _is_label_like_text(text):
+                continue
+            candidate_text_count += 1
+            if len(candidate_samples) < 5 and text not in seen_sample:
+                seen_sample.add(text)
+                candidate_samples.append(text)
 
             bbox = _extract_bbox(node)
             if not bbox:
                 continue
 
-            m_num = _LEADING_NUM_RE.match(text) if text else None
-            m_col = _ANCHOR_RE.match(text.upper()) if text else None
+            m_num = _LEADING_NUM_RE.match(text)
+            m_col = _ANCHOR_RE.match(text.upper())
             if m_num or m_col:
                 n_val = int(m_num.group(1)) if m_num else -1
                 anchor_text = text
@@ -394,6 +406,21 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                 obj_type = "table"
             elif node.get("type") in ("figure", "table"):
                 obj_type = str(node.get("type"))
+            if obj_type:
+                key = (obj_type, *bbox)
+                if key not in seen_obj:
+                    seen_obj.add(key)
+                    objects.append({"type": obj_type, "bbox": bbox})
+
+    for src in bbox_sources:
+        for node in _iter_dicts(src):
+            bbox = _extract_bbox(node)
+            if not bbox:
+                continue
+            node_type = str(node.get("type") or "").lower()
+            obj_type = ""
+            if node_type in ("figure", "table"):
+                obj_type = node_type
             if obj_type:
                 key = (obj_type, *bbox)
                 if key not in seen_obj:
@@ -782,7 +809,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
         if pp_obj:
             payload["pp_obj"] = pp_obj
         print(
-            f"[debug] {page_name} candidates={candidate_count} matches={len(anchors)} sample={json.dumps(candidate_samples, ensure_ascii=True)}",
+            f"[debug] {page_name} candidates={candidate_count} matches={len(anchors)} sample_texts={json.dumps(candidate_samples, ensure_ascii=True)}",
             file=sys.stderr,
             flush=True,
         )
