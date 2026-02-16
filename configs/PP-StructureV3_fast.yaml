@@ -1,10 +1,5 @@
 ---
 SubModules:
-  ChartRecognition:
-    batch_size: 1
-    model_dir:
-    model_name: PP-Chart2Table
-    module_name: chart_recognition
   LayoutDetection:
     batch_size: 8
     layout_merge_bboxes_mode:
