@@ -449,7 +449,27 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         data["use_seal_recognition"] = False
         data["use_region_detection"] = True
 
-        # Keep SubModules/SubPipelines structure untouched for fast safety.
+        submodules = data.get("SubModules") if isinstance(data.get("SubModules"), dict) else None
+        if isinstance(submodules, dict):
+            submodules.pop("ChartRecognition", None)
+
+        subpipelines = data.get("SubPipelines") if isinstance(data.get("SubPipelines"), dict) else None
+        if isinstance(subpipelines, dict):
+            for key in ("TableRecognition", "FormulaRecognition", "SealRecognition"):
+                subpipelines.pop(key, None)
+
+            doc_pre = subpipelines.get("DocPreprocessor")
+            if isinstance(doc_pre, dict):
+                doc_pre["use_doc_orientation_classify"] = False
+                doc_pre["use_doc_unwarping"] = False
+
+            general_ocr = subpipelines.get("GeneralOCR")
+            if isinstance(general_ocr, dict):
+                general_ocr["use_textline_orientation"] = False
+                g_sub = general_ocr.get("SubModules")
+                if isinstance(g_sub, dict):
+                    g_sub.pop("TextLineOrientation", None)
+
         _dump_yaml_with_fallback(data, fast_yaml)
         if not _validate_fast_yaml_region_detection(fast_yaml):
             _stage("make_fast_yaml_skip validation_failed")
