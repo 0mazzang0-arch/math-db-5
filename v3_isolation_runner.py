@@ -36,6 +36,8 @@ os.environ["FLAGS_use_onednn"] = "0"
 os.environ["FLAGS_enable_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_new_ir"] = "0"
+os.environ["FLAGS_logtostderr"] = "1"
+os.environ["GLOG_logtostderr"] = "1"
 
 try:
     if hasattr(sys.stdout, "reconfigure"):
@@ -526,7 +528,7 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
                         if "limit_side_len" in text_det:
                             text_det["limit_side_len"] = 512
                         text_det["limit_type"] = "min"
-                        text_det["max_side_limit"] = 2400
+                        text_det["max_side_limit"] = 2000
 
         _dump_yaml_with_fallback(data, fast_yaml)
         if not _validate_fast_yaml_region_detection(fast_yaml):
@@ -798,7 +800,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("image_path", nargs="?", help="single image path (e.g., P001.png)")
     parser.add_argument("--pages_dir", required=False, help="directory containing P*.png files (batch mode)")
-    parser.add_argument("--dpi", type=int, default=200, help="reserved")
+    parser.add_argument("--dpi", type=int, default=180, help="PDF render hint; ignored for direct image input")
     parser.add_argument("--warmup", type=int, choices=[0, 1], default=1)
     parser.add_argument("--profile", choices=["fast", "full"], default="fast")
     parser.add_argument("--force_region_detection", type=int, choices=[-1, 0, 1], default=-1)
