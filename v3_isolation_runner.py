@@ -26,10 +26,12 @@ _PAYLOAD_BASE_KEYS = {
     "profile",
     "predict_flags",
     "err",
+    "pp_obj",
 }
 _MAX_LIST_LEN = 5000
 _MAX_ANCHORS = 200
 _MAX_OBJECTS = 200
+_PP_OBJ_ALLOWED_KEYS = {"overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"}
 
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["FLAGS_use_mkldnn"] = "0"
@@ -107,6 +109,39 @@ def _sanitize_value(value: Any) -> Any:
     return value
 
 
+
+def _sanitize_pp_obj_value(value: Any) -> Any:
+    try:
+        import numpy as np
+
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        elif isinstance(value, np.integer):
+            return int(value)
+        elif isinstance(value, np.floating):
+            return float(value)
+    except Exception:
+        pass
+
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for k, v in value.items():
+            key = str(k)
+            if key in _PAYLOAD_DROP_KEYS:
+                continue
+            out[key] = _sanitize_pp_obj_value(v)
+        return out
+
+    if isinstance(value, list):
+        if len(value) > _MAX_LIST_LEN:
+            return "[TRUNCATED]"
+        return [_sanitize_pp_obj_value(v) for v in value]
+
+    if isinstance(value, tuple):
+        return [_sanitize_pp_obj_value(v) for v in value]
+
+    return value
+
 def _sanitize_payload_for_emit(payload: Dict[str, Any]) -> Dict[str, Any]:
     compact: Dict[str, Any] = {}
     for key in _PAYLOAD_BASE_KEYS:
@@ -120,6 +155,10 @@ def _sanitize_payload_for_emit(payload: Dict[str, Any]) -> Dict[str, Any]:
     objects = payload.get("objects")
     if isinstance(objects, list) and objects:
         compact["objects"] = objects[:_MAX_OBJECTS]
+
+    pp_obj = payload.get("pp_obj")
+    if isinstance(pp_obj, dict) and pp_obj:
+        compact["pp_obj"] = _sanitize_pp_obj_value({k: pp_obj[k] for k in _PP_OBJ_ALLOWED_KEYS if k in pp_obj})
 
     return _sanitize_value(compact)
 
@@ -430,8 +469,14 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         data["use_seal_recognition"] = False
         data["use_region_detection"] = True
 
+        submodules = data.get("SubModules") if isinstance(data.get("SubModules"), dict) else None
+        if isinstance(submodules, dict):
+            submodules.pop("ChartRecognition", None)
+
         subpipelines = data.get("SubPipelines") if isinstance(data.get("SubPipelines"), dict) else None
         if isinstance(subpipelines, dict):
+            for key in ["ChartRecognition", "FormulaRecognition", "TableRecognition", "SealRecognition"]:
+                subpipelines.pop(key, None)
             doc_prep = subpipelines.get("DocPreprocessor")
             if isinstance(doc_prep, dict):
                 if "use_doc_orientation_classify" in doc_prep:
@@ -495,52 +540,6 @@ def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> N
     made = _make_fast_yaml_from_full(full_cfg, fast_cfg)
     if made:
         _sanitize_fast_yaml_doc_preprocessor(fast_cfg)
-    _stage(f"fast_yaml_regenerated exists={fast_cfg.exists()}")
-
-
-def _sanitize_fast_yaml_doc_preprocessor(fast_cfg: Path) -> bool:
-    if not fast_cfg.exists():
-        return False
-    try:
-        lines = fast_cfg.read_text(encoding="utf-8", errors="replace").splitlines()
-    except Exception as e:
-        _stage(f"fast_yaml_read_failed err={e}")
-        return False
-
-    changed = False
-    out: List[str] = []
-    for line in lines:
-        if re.match(r"^use_doc_preprocessor:\s*(true|True)\s*$", line):
-            out.append("use_doc_preprocessor: false")
-            changed = True
-            continue
-        out.append(line)
-
-    if changed:
-        try:
-            fast_cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
-            _stage("fast_yaml_sanity_fixed use_doc_preprocessor=false")
-        except Exception as e:
-            _stage(f"fast_yaml_sanity_write_failed err={e}")
-            return False
-    return changed
-
-
-def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> None:
-    _stage(f"fast_init_failed err={init_err}")
-    removed = False
-    try:
-        if fast_cfg.exists():
-            fast_cfg.unlink()
-            removed = True
-    except Exception as e:
-        _stage(f"fast_yaml_remove_failed err={e}")
-    else:
-        _stage(f"fast_yaml_removed={removed}")
-
-    _export_full_yaml_if_missing(full_cfg)
-    _make_fast_yaml_from_full(full_cfg, fast_cfg)
-    _sanitize_fast_yaml_doc_preprocessor(fast_cfg)
     _stage(f"fast_yaml_regenerated exists={fast_cfg.exists()}")
 
 
@@ -652,7 +651,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
         )
         anchors, objects = _extract_min_entities(pp_json, pp_obj)
-        return {
+        payload = {
             "ok": True,
             "page_file": page_name,
             "stage": "predict_done",
@@ -663,6 +662,9 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             "t_page_ms": round(t_page_ms, 3),
             "predict_flags": flags,
         }
+        if pp_obj_min:
+            payload["pp_obj"] = pp_obj_min
+        return payload
     except Exception as e:
         t_page_ms = (time.perf_counter() - page_start) * 1000.0
         return {
