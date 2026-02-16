@@ -506,12 +506,8 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         data["use_seal_recognition"] = False
         data["use_region_detection"] = True
 
-        # Fast tuning (dict-based): keep Region/Layout intact, remove only ChartRecognition loader.
+        # Fast tuning via value-only toggles (preserve full export structure).
         data["batch_size"] = 1
-
-        submodules = data.get("SubModules")
-        if isinstance(submodules, dict):
-            submodules.pop("ChartRecognition", None)
 
         subpipes = data.get("SubPipelines")
         if isinstance(subpipes, dict):
