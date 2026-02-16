@@ -349,15 +349,7 @@ def _warmup_once(engine: Any, enabled: bool, profile: str, force_region_detectio
     except Exception as e:
         _stage(f"warmup_skip err={e}")
 
-    if profile == "fast":
-        cfg = CONFIG_DIR / "PP-StructureV3_fast.yaml"
-        if cfg.exists():
-            return PPStructureV3(paddlex_config=str(cfg))
-    if profile == "full":
-        cfg = CONFIG_DIR / "PP-StructureV3_full.yaml"
-        if cfg.exists():
-            return PPStructureV3(paddlex_config=str(cfg))
-    return PPStructureV3()
+
 
 def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, force_region_detection: int, payload_mode: str) -> Dict[str, Any]:
     page_name = page_path.name
