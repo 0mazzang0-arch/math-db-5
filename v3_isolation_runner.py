@@ -481,7 +481,7 @@ def _is_poly_like(value: Any) -> bool:
     return bool(_poly_to_bbox(value) or _box_to_bbox(value))
 
 
-def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None):
+def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None, zip_key_counts: Dict[str, int] | None = None):
     if isinstance(obj, dict):
         cur_bbox = _extract_bbox(obj) or (inherited_bbox or [])
 
@@ -501,7 +501,7 @@ def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None):
 
         text_arr = None
         text_key = ""
-        for k in ("rec_texts", "rec_text", "rec_text_list", "texts", "text", "rec_res"):
+        for k in ("rec_texts", "rec_text", "rec_res", "texts", "text", "rec_text_list"):
             v = _arr(k)
             if isinstance(v, (list, tuple)) and v and all(isinstance(x, str) for x in v):
                 text_arr = v
@@ -528,13 +528,19 @@ def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None):
                     poly_key = k
                     break
 
-            if box_arr is not None:
+            if box_arr is not None and len(box_arr) == len(text_arr):
+                if zip_key_counts is not None:
+                    zip_key_counts[text_key] = len(text_arr)
+                    zip_key_counts[box_key] = len(box_arr)
                 for txt, box in zip(text_arr, box_arr):
                     if isinstance(txt, str) and txt.strip():
                         yield txt, (_box_to_bbox(box) or cur_bbox)
                 pair_consumed = True
                 paired_keys.update({text_key, box_key})
-            elif poly_arr is not None:
+            elif poly_arr is not None and len(poly_arr) == len(text_arr):
+                if zip_key_counts is not None:
+                    zip_key_counts[text_key] = len(text_arr)
+                    zip_key_counts[poly_key] = len(poly_arr)
                 for txt, poly in zip(text_arr, poly_arr):
                     if isinstance(txt, str) and txt.strip():
                         yield txt, (_poly_to_bbox(poly) or cur_bbox)
@@ -564,7 +570,7 @@ def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None):
         for k, v in obj.items():
             if k in skip_keys:
                 continue
-            yield from _iter_ocr_items(v, cur_bbox)
+            yield from _iter_ocr_items(v, cur_bbox, zip_key_counts)
         return
 
     if isinstance(obj, (list, tuple)):
@@ -591,7 +597,7 @@ def _iter_ocr_items(obj: Any, inherited_bbox: List[int] | None = None):
             return
 
         for it in obj:
-            yield from _iter_ocr_items(it, inherited_bbox)
+            yield from _iter_ocr_items(it, inherited_bbox, zip_key_counts)
 
 
 def _normalize_anchor_text(text: str) -> str:
@@ -711,7 +717,7 @@ def _build_fragment_anchors(fragments: List[Dict[str, Any]]) -> Tuple[List[Dict[
     return made, dbg_parts[:5], dbg_joined
 
 
-def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, int, int, List[str], List[str], str]:
+def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, int, int, List[str], List[str], str, Dict[str, int]]:
     anchors: List[Dict[str, Any]] = []
     objects: List[Dict[str, Any]] = []
     seen_anchor = set()
@@ -723,6 +729,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
     digit_fragments: List[Dict[str, Any]] = []
     bbox_item_count = 0
     seen_candidate = set()
+    zip_key_counts: Dict[str, int] = {}
 
     ocr_sources: List[Any] = []
     bbox_sources: List[Any] = []
@@ -739,7 +746,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
         ocr_sources.append(pp_json)
 
     for src in ocr_sources:
-        for text_raw, bbox in _iter_ocr_items(src):
+        for text_raw, bbox in _iter_ocr_items(src, None, zip_key_counts):
             text = _normalize_digit_candidate(text_raw)
             if _is_label_like_text(text):
                 continue
@@ -801,7 +808,7 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
             anchors.append(a)
 
     anchors.sort(key=lambda a: (a.get("bbox", [0, 0, 0, 0])[1], a.get("bbox", [0, 0, 0, 0])[0]))
-    return anchors, objects, candidate_text_count, digit_candidate_count, len(digit_fragments), bbox_item_count, candidate_samples, frag_parts, frag_joined
+    return anchors, objects, candidate_text_count, digit_candidate_count, len(digit_fragments), bbox_item_count, candidate_samples, frag_parts, frag_joined, zip_key_counts
 
 
 def _predict_flags(profile: str, force_region_detection: int) -> Dict[str, Any]:
@@ -1167,7 +1174,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             first,
             keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
         )
-        anchors, objects, candidate_count, digit_candidate_count, frag_count, bbox_item_count, candidate_samples, frag_parts, frag_joined = _extract_min_entities(pp_json, pp_obj)
+        anchors, objects, candidate_count, digit_candidate_count, frag_count, bbox_item_count, candidate_samples, frag_parts, frag_joined, zip_key_counts = _extract_min_entities(pp_json, pp_obj)
         payload = {
             "ok": True,
             "page_file": page_name,
@@ -1193,11 +1200,16 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             except Exception:
                 bbox_keys_debug = []
 
+        extra_debug = ""
+        if bbox_item_count == 0:
+            if zip_key_counts:
+                extra_debug = f" zip_keys={json.dumps(zip_key_counts, ensure_ascii=True)}"
+            elif bbox_keys_debug:
+                extra_debug = f" bbox_keys={json.dumps(bbox_keys_debug, ensure_ascii=True)}"
+
         print(
-            f"[debug] {page_name} candidates={candidate_count} digit_candidates={digit_candidate_count} frag_count={frag_count} bbox_items={bbox_item_count} matches={len(anchors)} "
-            f"sample_texts={json.dumps(candidate_samples, ensure_ascii=True)} "
-            f"parts={json.dumps(frag_parts, ensure_ascii=True)} joined={json.dumps(frag_joined, ensure_ascii=True)} "
-            f"bbox_keys={json.dumps(bbox_keys_debug, ensure_ascii=True)}",
+            f"[debug] {page_name} candidates={candidate_count} digit_candidates={digit_candidate_count} bbox_items={bbox_item_count} frag_count={frag_count} matches={len(anchors)} "
+            f"sample_texts={json.dumps(candidate_samples, ensure_ascii=True)}{extra_debug}",
             file=sys.stderr,
             flush=True,
         )
