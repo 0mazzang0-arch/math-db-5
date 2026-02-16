@@ -486,6 +486,21 @@ def _extract_min_entities(pp_json: Dict[str, Any], pp_obj: Dict[str, Any]) -> Tu
                     seen_obj.add(key)
                     objects.append({"type": obj_type, "bbox": bbox})
 
+    for src in bbox_sources:
+        for node in _iter_dicts(src):
+            bbox = _extract_bbox(node)
+            if not bbox:
+                continue
+            node_type = str(node.get("type") or "").lower()
+            obj_type = ""
+            if node_type in ("figure", "table"):
+                obj_type = node_type
+            if obj_type:
+                key = (obj_type, *bbox)
+                if key not in seen_obj:
+                    seen_obj.add(key)
+                    objects.append({"type": obj_type, "bbox": bbox})
+
     anchors.sort(key=lambda a: (a.get("bbox", [0, 0, 0, 0])[1], a.get("bbox", [0, 0, 0, 0])[0]))
     return anchors, objects, candidate_text_count, digit_candidate_count, candidate_samples
 
@@ -892,6 +907,9 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
         _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": f"invalid pages_dir: {pages_dir}", "profile": profile}, payload_mode=payload_mode)
         return 1
 
+    if payload_mode != "min":
+        _stage("payload_mode_forced min")
+
     page_files = _sorted_page_files(pages_dir)
     _stage(f"start pages={len(page_files)} profile={profile}")
     if not page_files:
@@ -932,6 +950,9 @@ def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_
     if not image_path.exists() or not image_path.is_file():
         _emit_json({"ok": False, "page_file": image_path.name, "stage": "args", "err": f"invalid image_path: {image_path}", "profile": profile}, payload_mode=payload_mode)
         return 1
+
+    if payload_mode != "min":
+        _stage("payload_mode_forced min")
 
     init_start = time.perf_counter()
     try:
