@@ -15,23 +15,20 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "configs"
 _ANCHOR_RE = re.compile(r"^\s*([A-C])\s*([0-9]{1,3})?\s*$")
 _PAYLOAD_DROP_KEYS = {"img", "image", "dummy", "pixels", "raw", "page_bytes", "file_bytes", "input"}
-_PAYLOAD_BASE_KEYS = {
+_MIN_PAYLOAD_KEYS = {
     "ok",
     "page_file",
+    "profile",
     "stage",
     "t_init_ms",
     "t_predict_ms",
     "t_page_ms",
     "t_emit_ms",
-    "profile",
     "predict_flags",
-    "err",
-    "pp_obj",
 }
-_MAX_LIST_LEN = 5000
-_MAX_ANCHORS = 200
-_MAX_OBJECTS = 200
-_PP_OBJ_ALLOWED_KEYS = {"overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"}
+_MAX_LIST_LEN = 2000
+_MAX_DICT_KEYS = 200
+_MAX_DUMP_CHARS = 200 * 1024
 
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["FLAGS_use_mkldnn"] = "0"
@@ -83,107 +80,90 @@ def _sanitize_value(value: Any) -> Any:
 
         if isinstance(value, np.ndarray):
             return "[NDARRAY_OMITTED]"
-    except Exception:
-        pass
-
-    if isinstance(value, dict):
-        out: Dict[str, Any] = {}
-        for k, v in value.items():
-            key = str(k)
-            if key in _PAYLOAD_DROP_KEYS:
-                continue
-            if isinstance(v, list) and len(v) > _MAX_LIST_LEN:
-                out[key] = "[TRUNCATED]"
-                continue
-            out[key] = _sanitize_value(v)
-        return out
-
-    if isinstance(value, list):
-        if len(value) > _MAX_LIST_LEN:
-            return "[TRUNCATED]"
-        return [_sanitize_value(v) for v in value]
-
-    if isinstance(value, tuple):
-        return [_sanitize_value(v) for v in value]
-
-    return value
-
-
-
-def _sanitize_pp_obj_value(value: Any) -> Any:
-    try:
-        import numpy as np
-
-        if isinstance(value, np.ndarray):
-            value = value.tolist()
-        elif isinstance(value, np.integer):
+        if isinstance(value, np.integer):
             return int(value)
-        elif isinstance(value, np.floating):
+        if isinstance(value, np.floating):
             return float(value)
     except Exception:
         pass
 
     if isinstance(value, dict):
         out: Dict[str, Any] = {}
-        for k, v in value.items():
+        for i, (k, v) in enumerate(value.items()):
+            if i >= _MAX_DICT_KEYS:
+                out["__truncated_keys__"] = "[TRUNCATED]"
+                break
             key = str(k)
             if key in _PAYLOAD_DROP_KEYS:
                 continue
-            out[key] = _sanitize_pp_obj_value(v)
+            out[key] = _sanitize_value(v)
         return out
 
     if isinstance(value, list):
         if len(value) > _MAX_LIST_LEN:
-            return "[TRUNCATED]"
-        return [_sanitize_pp_obj_value(v) for v in value]
+            return [_sanitize_value(v) for v in value[:_MAX_LIST_LEN]] + ["[TRUNCATED]"]
+        return [_sanitize_value(v) for v in value]
 
     if isinstance(value, tuple):
-        return [_sanitize_pp_obj_value(v) for v in value]
+        as_list = list(value)
+        if len(as_list) > _MAX_LIST_LEN:
+            as_list = as_list[:_MAX_LIST_LEN] + ["[TRUNCATED]"]
+        return [_sanitize_value(v) for v in as_list]
 
     return value
 
-def _sanitize_payload_for_emit(payload: Dict[str, Any]) -> Dict[str, Any]:
-    compact: Dict[str, Any] = {}
-    for key in _PAYLOAD_BASE_KEYS:
+
+def _build_min_payload(payload: Dict[str, Any], fallback_page_file: str) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"page_file": payload.get("page_file", fallback_page_file)}
+    for key in _MIN_PAYLOAD_KEYS:
         if key in payload:
-            compact[key] = payload[key]
-
-    anchors = payload.get("anchors")
-    if isinstance(anchors, list) and anchors:
-        compact["anchors"] = anchors[:_MAX_ANCHORS]
-
-    objects = payload.get("objects")
-    if isinstance(objects, list) and objects:
-        compact["objects"] = objects[:_MAX_OBJECTS]
-
-    pp_obj = payload.get("pp_obj")
-    if isinstance(pp_obj, dict) and pp_obj:
-        compact["pp_obj"] = _sanitize_pp_obj_value({k: pp_obj[k] for k in _PP_OBJ_ALLOWED_KEYS if k in pp_obj})
-
-    return _sanitize_value(compact)
+            out[key] = payload[key]
+    out.setdefault("stage", payload.get("stage", "predict_done"))
+    out.setdefault("profile", payload.get("profile", "fast"))
+    out.setdefault("ok", bool(payload.get("ok", False)))
+    return out
 
 
-def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "") -> float:
+def _truncate_heavy_top_level(payload: Dict[str, Any]) -> Dict[str, Any]:
+    compact: Dict[str, Any] = {}
+    for k, v in payload.items():
+        if isinstance(v, (list, dict, tuple)):
+            compact[k] = "[TRUNCATED]"
+        else:
+            compact[k] = v
+    return compact
+
+
+def _emit_json(payload: Dict[str, Any], fallback_page_file: str = "", payload_mode: str = "min") -> float:
     global _LAST_EMIT_MS
     emit_start = time.perf_counter()
     try:
         payload.setdefault("page_file", fallback_page_file)
         payload["t_emit_ms"] = round(_LAST_EMIT_MS, 3)
-        sanitized_payload = _sanitize_payload_for_emit(payload)
-        print(json.dumps(sanitized_payload, ensure_ascii=True, default=_converter), flush=True)
+        if payload_mode == "min":
+            out_payload = _build_min_payload(payload, fallback_page_file)
+            print(json.dumps(out_payload, ensure_ascii=True, default=_converter), flush=True)
+        else:
+            out_payload = _sanitize_value(payload)
+            dumped = json.dumps(out_payload, ensure_ascii=True, default=_converter)
+            if len(dumped) > _MAX_DUMP_CHARS:
+                out_payload = _truncate_heavy_top_level(out_payload)
+                dumped = json.dumps(out_payload, ensure_ascii=True, default=_converter)
+            print(dumped, flush=True)
     except Exception as e:
         err_payload = {
             "ok": False,
             "stage": "emit",
-            "err": str(e),
             "page_file": payload.get("page_file", fallback_page_file),
+            "profile": payload.get("profile", "fast"),
             "t_emit_ms": round(_LAST_EMIT_MS, 3),
         }
         try:
-            print(json.dumps(_sanitize_payload_for_emit(err_payload), ensure_ascii=True, default=_converter), flush=True)
+            print(json.dumps(_build_min_payload(err_payload, fallback_page_file), ensure_ascii=True, default=_converter), flush=True)
         except Exception:
-            sys.stdout.write('{"ok": false, "stage": "emit", "err": "emit failed", "page_file": "__BATCH__", "t_emit_ms": 0.0}\n')
+            sys.stdout.write('{"ok": false, "stage": "emit", "page_file": "__BATCH__", "profile": "fast", "t_emit_ms": 0.0}\n')
             sys.stdout.flush()
+        _stage(f"emit_error err={e}")
     _LAST_EMIT_MS = (time.perf_counter() - emit_start) * 1000.0
     return _LAST_EMIT_MS
 
@@ -636,7 +616,7 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
 
 def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_detection: int, payload_mode: str) -> int:
     if not pages_dir.exists() or not pages_dir.is_dir():
-        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": f"invalid pages_dir: {pages_dir}", "profile": profile})
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": f"invalid pages_dir: {pages_dir}", "profile": profile}, payload_mode=payload_mode)
         return 1
 
     if payload_mode != "min":
@@ -645,7 +625,7 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
     page_files = _sorted_page_files(pages_dir)
     _stage(f"start pages={len(page_files)} profile={profile}")
     if not page_files:
-        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "load_pages", "err": "no P*.png files", "profile": profile})
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "load_pages", "err": "no P*.png files", "profile": profile}, payload_mode=payload_mode)
         return 1
 
     init_start = time.perf_counter()
@@ -654,7 +634,7 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
         t_init_ms = (time.perf_counter() - init_start) * 1000.0
         _stage(f"init_ok t_init_ms={t_init_ms:.1f}")
     except Exception as e:
-        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "init_engine", "err": str(e), "profile": profile})
+        _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "init_engine", "err": str(e), "profile": profile}, payload_mode=payload_mode)
         return 1
 
     _warmup_once(engine, warmup, profile, force_region_detection)
@@ -668,7 +648,7 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
             force_region_detection=force_region_detection,
         )
         payload["profile"] = profile
-        t_emit_ms = _emit_json(payload, fallback_page_file=page_path.name)
+        t_emit_ms = _emit_json(payload, fallback_page_file=page_path.name, payload_mode=payload_mode)
         _stage(
             f"predict_done {page_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
             f"t_predict_ms={float(payload.get('t_predict_ms', 0.0)):.1f} t_emit_ms={t_emit_ms:.1f} "
@@ -680,7 +660,7 @@ def run_pages_dir(pages_dir: Path, warmup: bool, profile: str, force_region_dete
 
 def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_detection: int, payload_mode: str) -> int:
     if not image_path.exists() or not image_path.is_file():
-        _emit_json({"ok": False, "page_file": image_path.name, "stage": "args", "err": f"invalid image_path: {image_path}", "profile": profile})
+        _emit_json({"ok": False, "page_file": image_path.name, "stage": "args", "err": f"invalid image_path: {image_path}", "profile": profile}, payload_mode=payload_mode)
         return 1
 
     if payload_mode != "min":
@@ -692,7 +672,7 @@ def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_
         t_init_ms = (time.perf_counter() - init_start) * 1000.0
         _stage(f"init_ok(single) t_init_ms={t_init_ms:.1f}")
     except Exception as e:
-        _emit_json({"ok": False, "page_file": image_path.name, "stage": "init_engine", "err": str(e), "profile": profile})
+        _emit_json({"ok": False, "page_file": image_path.name, "stage": "init_engine", "err": str(e), "profile": profile}, payload_mode=payload_mode)
         return 1
 
     _warmup_once(engine, warmup, profile, force_region_detection)
@@ -704,7 +684,7 @@ def run_single_image(image_path: Path, warmup: bool, profile: str, force_region_
         force_region_detection=force_region_detection,
     )
     payload["profile"] = profile
-    t_emit_ms = _emit_json(payload, fallback_page_file=image_path.name)
+    t_emit_ms = _emit_json(payload, fallback_page_file=image_path.name, payload_mode=payload_mode)
     _stage(
         f"predict_done {image_path.name} t_init_ms={float(payload.get('t_init_ms', 0.0)):.1f} "
         f"t_predict_ms={float(payload.get('t_predict_ms', 0.0)):.1f} t_emit_ms={t_emit_ms:.1f} "
@@ -741,7 +721,7 @@ def main() -> int:
             payload_mode=args.payload,
         )
 
-    _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": "usage: v3_isolation_runner.py (--pages_dir DIR) | (image_path)", "profile": args.profile})
+    _emit_json({"ok": False, "page_file": "__BATCH__", "stage": "args", "err": "usage: v3_isolation_runner.py (--pages_dir DIR) | (image_path)", "profile": args.profile}, payload_mode=args.payload)
     return 1
 
 
