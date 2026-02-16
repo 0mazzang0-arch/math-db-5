@@ -506,17 +506,11 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         data["use_seal_recognition"] = False
         data["use_region_detection"] = True
 
-        # Remove optional heavy loaders for fast.
-        submodules = data.get("SubModules")
-        if isinstance(submodules, dict):
-            submodules.pop("ChartRecognition", None)
+        # Fast tuning via value changes only (preserve full export structure).
+        data["batch_size"] = 1
 
         subpipes = data.get("SubPipelines")
         if isinstance(subpipes, dict):
-            subpipes.pop("TableRecognition", None)
-            subpipes.pop("FormulaRecognition", None)
-            subpipes.pop("SealRecognition", None)
-
             doc_pre = subpipes.get("DocPreprocessor")
             if isinstance(doc_pre, dict):
                 doc_pre["use_doc_orientation_classify"] = False
@@ -527,7 +521,9 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
                 general_ocr["use_textline_orientation"] = False
                 g_sub = general_ocr.get("SubModules")
                 if isinstance(g_sub, dict):
-                    g_sub.pop("TextLineOrientation", None)
+                    text_det = g_sub.get("TextDetection")
+                    if isinstance(text_det, dict) and "limit_side_len" in text_det:
+                        text_det["limit_side_len"] = 512
 
         _dump_yaml_with_fallback(data, fast_yaml)
         if not _validate_fast_yaml_region_detection(fast_yaml):
