@@ -513,9 +513,10 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
         if isinstance(submodules, dict):
             chart_module = submodules.get("ChartRecognition")
             if isinstance(chart_module, dict):
-                # Keep block for schema stability, but request explicit disable in-module.
+                # Keep block for schema stability, but force chart loader unavailable in fast profile.
                 chart_module["enabled"] = False
                 chart_module["use_chart_recognition"] = False
+                chart_module["model_dir"] = "__DISABLED__"
 
         subpipes = data.get("SubPipelines")
         if isinstance(subpipes, dict):

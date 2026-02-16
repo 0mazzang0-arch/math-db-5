@@ -2,7 +2,7 @@
 SubModules:
   ChartRecognition:
     batch_size: 1
-    model_dir:
+    model_dir: __DISABLED__
     model_name: PP-Chart2Table
     module_name: chart_recognition
     enabled: false
