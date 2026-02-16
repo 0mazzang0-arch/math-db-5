@@ -352,10 +352,35 @@ def _predict_with_fallback(engine: Any, inp: Any, predict_kwargs: Dict[str, Any]
         raise
 
 
+
+def _is_valid_full_yaml(full_yaml: Path) -> bool:
+    if not full_yaml.exists():
+        return False
+    try:
+        cfg = _load_yaml_with_fallback(full_yaml)
+    except Exception as e:
+        _stage(f"full_yaml_validate_read_failed err={e}")
+        return False
+    if not isinstance(cfg, dict):
+        return False
+    return isinstance(cfg.get("SubModules"), dict) and isinstance(cfg.get("SubPipelines"), dict)
+
 def _export_full_yaml_if_missing(full_yaml: Path) -> None:
-    if full_yaml.exists():
-        return
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if full_yaml.exists() and _is_valid_full_yaml(full_yaml):
+        return
+
+    if full_yaml.exists():
+        try:
+            placeholder = full_yaml.with_name("PP-StructureV3_full.placeholder.yaml")
+            if placeholder.exists():
+                ts = time.strftime("%Y%m%d-%H%M%S")
+                placeholder = full_yaml.with_name(f"PP-StructureV3_full.placeholder.{ts}.yaml")
+            full_yaml.rename(placeholder)
+            _stage(f"full_yaml_placeholder_renamed to={placeholder.name}")
+        except Exception as e:
+            _stage(f"full_yaml_placeholder_rename_failed err={e}")
+
     try:
         from paddleocr import PPStructureV3
 
@@ -513,11 +538,15 @@ def _make_fast_yaml_from_full(full_yaml: Path, fast_yaml: Path) -> bool:
 
 def _delete_fast_yaml(fast_cfg: Path, reason: str) -> None:
     try:
-        if fast_cfg.exists():
-            fast_cfg.unlink()
-            _stage(f"fast_yaml_deleted reason={reason}")
+        if not fast_cfg.exists():
+            return
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        safe_reason = re.sub(r"[^A-Za-z0-9_-]+", "_", reason).strip("_") or "unknown"
+        bad = fast_cfg.with_name(f"PP-StructureV3_fast.bad.{safe_reason}.{ts}.yaml")
+        fast_cfg.rename(bad)
+        _stage(f"fast_yaml_preserved_bad file={bad.name}")
     except Exception as e:
-        _stage(f"fast_yaml_delete_failed reason={reason} err={e}")
+        _stage(f"fast_yaml_preserve_failed reason={reason} err={e}")
 
 
 def _load_engine(profile: str) -> Any:
