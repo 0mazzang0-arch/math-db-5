@@ -74,7 +74,7 @@ SubPipelines:
         model_dir:
         model_name: UVDoc
         module_name: image_unwarping
-    batch_size: 8
+    batch_size: 1
     pipeline_name: doc_preprocessor
     use_doc_orientation_classify: false
     use_doc_unwarping: false
@@ -93,7 +93,7 @@ SubPipelines:
     SubModules:
       TextDetection:
         box_thresh: 0.6
-        limit_side_len: 736
+        limit_side_len: 512
         limit_type: min
         max_side_limit: 4000
         model_dir:
@@ -112,7 +112,7 @@ SubPipelines:
         model_name: PP-OCRv5_server_rec
         module_name: text_recognition
         score_thresh: 0.0
-    batch_size: 8
+    batch_size: 1
     pipeline_name: OCR
     text_type: general
     use_doc_preprocessor: false
