@@ -498,6 +498,52 @@ def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> N
     _stage(f"fast_yaml_regenerated exists={fast_cfg.exists()}")
 
 
+def _sanitize_fast_yaml_doc_preprocessor(fast_cfg: Path) -> bool:
+    if not fast_cfg.exists():
+        return False
+    try:
+        lines = fast_cfg.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception as e:
+        _stage(f"fast_yaml_read_failed err={e}")
+        return False
+
+    changed = False
+    out: List[str] = []
+    for line in lines:
+        if re.match(r"^use_doc_preprocessor:\s*(true|True)\s*$", line):
+            out.append("use_doc_preprocessor: false")
+            changed = True
+            continue
+        out.append(line)
+
+    if changed:
+        try:
+            fast_cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
+            _stage("fast_yaml_sanity_fixed use_doc_preprocessor=false")
+        except Exception as e:
+            _stage(f"fast_yaml_sanity_write_failed err={e}")
+            return False
+    return changed
+
+
+def _recover_fast_yaml(full_cfg: Path, fast_cfg: Path, init_err: Exception) -> None:
+    _stage(f"fast_init_failed err={init_err}")
+    removed = False
+    try:
+        if fast_cfg.exists():
+            fast_cfg.unlink()
+            removed = True
+    except Exception as e:
+        _stage(f"fast_yaml_remove_failed err={e}")
+    else:
+        _stage(f"fast_yaml_removed={removed}")
+
+    _export_full_yaml_if_missing(full_cfg)
+    _make_fast_yaml_from_full(full_cfg, fast_cfg)
+    _sanitize_fast_yaml_doc_preprocessor(fast_cfg)
+    _stage(f"fast_yaml_regenerated exists={fast_cfg.exists()}")
+
+
 def _load_engine(profile: str) -> Any:
     from paddleocr import PPStructureV3
 
@@ -601,6 +647,10 @@ def _predict_one(engine: Any, page_path: Path, t_init_ms: float, profile: str, f
             }
 
         pp_obj = _extract_first_object_fields(first)
+        pp_obj_min = _extract_first_object_fields(
+            first,
+            keys=["overall_ocr_res", "parsing_res_list", "layout_det_res", "region_det_res"],
+        )
         anchors, objects = _extract_min_entities(pp_json, pp_obj)
         return {
             "ok": True,
