@@ -728,8 +728,11 @@ class AutoMathBot:
         
         if messagebox.askyesno("경고", f"정말 '{fname}'을 완전히 삭제합니까?\n(로컬 파일 + 노션 페이지 + Git에서 모두 사라집니다)"):
             if self.current_page_id:
-                notion_api.delete_concept_page(self.current_page_id) 
-                self.log(f"🗑️ 노션 페이지 삭제 완료: {self.current_page_id}")
+                ok_archive, archive_msg = notion_api.archive_page(self.current_page_id)
+                if ok_archive:
+                    self.log(f"🗑️ 노션 페이지 아카이브 완료: {self.current_page_id}")
+                else:
+                    self.log(f"⚠️ [Archive Fail] 노션 아카이브 실패: {archive_msg}")
             
             md_path = os.path.join(config.MD_DIR_PATH, fname)
             if os.path.exists(md_path): os.remove(md_path)
@@ -1690,15 +1693,20 @@ class AutoMathBot:
                                             page_id_target, err_target = notion_api.find_page_id(best_match_file)
                                             if page_id_target:
                                                 update_payload = {"tags": [tag_to_add]}
-                                                notion_api.update_page_properties(page_id_target, update_payload)
-                                                self.log(f"✅ [태그 업데이트] {best_match_file} -> '{tag_to_add}'")
+                                                ok_update, msg_update = notion_api.update_page_properties(page_id_target, update_payload)
+                                                if ok_update:
+                                                    self.log(f"✅ [태그 업데이트] {best_match_file} -> '{tag_to_add}'")
 
-                                                relative_path = os.path.relpath(root, config.FAST_WATCH_DIR)
-                                                target_dir = os.path.join(COMPLETED_DIR, "[2]_자료수집_Fast_Updated", relative_path)
-                                                if not os.path.exists(target_dir): os.makedirs(target_dir)
-                                                shutil.move(q_path, os.path.join(target_dir, file))
-                                                if has_answer: shutil.move(a_path, os.path.join(target_dir, a_filename))
-                                                self.log(f"📦 완료 폴더(_Updated)로 이동됨.")
+                                                    relative_path = os.path.relpath(root, config.FAST_WATCH_DIR)
+                                                    target_dir = os.path.join(COMPLETED_DIR, "[2]_자료수집_Fast_Updated", relative_path)
+                                                    if not os.path.exists(target_dir): os.makedirs(target_dir)
+                                                    shutil.move(q_path, os.path.join(target_dir, file))
+                                                    if has_answer: shutil.move(a_path, os.path.join(target_dir, a_filename))
+                                                    self.log(f"📦 완료 폴더(_Updated)로 이동됨.")
+                                                else:
+                                                    self.log(f"❌ [태그 업데이트 실패] {msg_update}")
+                                                    self.move_to_dir(q_path, ERROR_DIR, file)
+                                                    if has_answer: self.move_to_dir(a_path, ERROR_DIR, a_filename)
                                             else:
                                                 self.log(f"❌ [Notion 404] 페이지 못 찾음: {err_target}")
                                         else:

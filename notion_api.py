@@ -247,18 +247,26 @@ def sync_db_to_memory(log_func=print):
     fetched_count = 0
     
     while has_more:
-        if next_cursor: payload["start_cursor"] = next_cursor
+        if next_cursor:
+            payload["start_cursor"] = next_cursor
+        elif "start_cursor" in payload:
+            payload.pop("start_cursor", None)
         try:
-            res = requests.post(url, headers=HEADERS, json=payload)
-            if res.status_code != 200: 
-                time.sleep(2)
-                continue
+            res = robust_request("POST", url, payload)
+            if not res or res.status_code != 200:
+                err_text = "No Response"
+                if res is not None:
+                    err_text = f"{res.status_code}: {(res.text or '')[:120]}"
+                log_func(f"⚠ [Notion Sync] query 실패, 안전 종료: {err_text}")
+                break
             
             data = res.json()
             results = data.get("results", [])
             
             for page in results:
                 try:
+                    if page.get("archived", False):
+                        continue
                     page_id = page["id"]
                     edited_time = page["last_edited_time"]
                     props = page["properties"]
@@ -266,13 +274,18 @@ def sync_db_to_memory(log_func=print):
 # ----------------------------------------------------------------------------------------------------
                     # [수술 부위] 공백 제목 무시 및 출처 컬럼 승격 로직 (Invisible Wall 방어)
                     # ----------------------------------------------------------------------------------------------------
-                    title_obj = props.get("문제&풀이", {})
-                    t_list = title_obj.get("title", []) or title_obj.get("rich_text", [])
-                    
-                    # 핵심: .strip()을 추가하여 공백만 있는 좀비 제목을 빈 문자열("")로 처리
-                    raw_title = t_list[0].get("plain_text", "").strip() if t_list else ""
+                    # 1순위: 이름(title/rich_text)
+                    name_obj = props.get("이름", {})
+                    name_list = name_obj.get("title", []) or name_obj.get("rich_text", [])
+                    raw_title = name_list[0].get("plain_text", "").strip() if name_list else ""
 
-                    # 제목이 텅 비었다면(공백 포함) '출처' 컬럼을 제목으로 승격
+                    # 2순위: 문제&풀이(title/rich_text)
+                    if not raw_title:
+                        title_obj = props.get("문제&풀이", {})
+                        t_list = title_obj.get("title", []) or title_obj.get("rich_text", [])
+                        raw_title = t_list[0].get("plain_text", "").strip() if t_list else ""
+
+                    # 3순위: 출처(rich_text/title)
                     if not raw_title:
                         src_obj = props.get("출처", {})
                         s_list = src_obj.get("rich_text", []) or src_obj.get("title", [])
@@ -299,7 +312,9 @@ def sync_db_to_memory(log_func=print):
             fetched_count += len(results)
             has_more = data.get("has_more", False)
             next_cursor = data.get("next_cursor")
-        except: time.sleep(2)
+        except Exception as e:
+            log_func(f"⚠ [Notion Sync] 예외, 안전 종료: {str(e)[:120]}")
+            break
 
     # 최종 캐시 리스트 생성
     NOTION_CACHE = list(existing_map.values())
@@ -528,15 +543,7 @@ def create_new_problem_page(title, db_data, concept_ids=None):
 
 def update_page_properties(page_id, db_data, concept_ids=None):
     """[기존 기능 보존] 기존 페이지 속성 업데이트"""
-    nec = db_data.get("necessity") or ""
-    key = db_data.get("key_idea") or ""
-    spe = db_data.get("special_point") or ""
-    
-    properties = {
-        "필연성": {"rich_text": [{"type": "text", "text": {"content": str(nec)}}]},
-        "핵심 아이디어": {"rich_text": [{"type": "text", "text": {"content": str(key)}}]},
-        "특이점": {"rich_text": [{"type": "text", "text": {"content": str(spe)}}]},
-    }
+    properties = {}
 
     def _get_existing_page_tags(target_page_id):
         """기존 페이지의 '태그' multi_select 이름 목록 조회"""
@@ -551,8 +558,20 @@ def update_page_properties(page_id, db_data, concept_ids=None):
         except Exception:
             return None
 
+    def _to_rich_text_prop(value):
+        return {"rich_text": [{"type": "text", "text": {"content": str(value if value is not None else "")}}]}
+
+    if "necessity" in db_data:
+        properties["필연성"] = _to_rich_text_prop(db_data.get("necessity"))
+    if "key_idea" in db_data:
+        properties["핵심 아이디어"] = _to_rich_text_prop(db_data.get("key_idea"))
+    if "special_point" in db_data:
+        properties["특이점"] = _to_rich_text_prop(db_data.get("special_point"))
+
     if "tags" in db_data:
         existing_tags = _get_existing_page_tags(page_id)
+        if existing_tags is None:
+            return False, "TAG_GET_FAILED"
 
         raw_tags = db_data.get("tags")
         if isinstance(raw_tags, str):
@@ -578,19 +597,48 @@ def update_page_properties(page_id, db_data, concept_ids=None):
                 seen_keys.add(normalized_key)
                 merged_tags.append(cleaned)
 
-        if existing_tags is not None:
+        # 병합 후 비어 있으면 안전하게 스킵(태그 클리어는 별도 기능)
+        if merged_tags:
             properties["태그"] = {"multi_select": [{"name": tag} for tag in merged_tags]}
     
-    if concept_ids and isinstance(concept_ids, list):
+    if concept_ids is not None and isinstance(concept_ids, list):
         relation_list = [{"id": cid} for cid in concept_ids]
         properties["실전개념"] = {"relation": relation_list}
-        
+
+    if not properties:
+        return True, "NO_CHANGES"
+
     payload = {"properties": properties}
     url = f"https://api.notion.com/v1/pages/{page_id}"
     
     res = robust_request("PATCH", url, payload)
     if res and res.status_code == 200: return True, "성공"
     return False, res.text if res else "Update Failed"
+
+
+def archive_page(page_id: str):
+    """페이지를 archived 처리하고 로컬 캐시/맵에서도 제거합니다."""
+    global NOTION_CACHE, FAST_LOOKUP_MAP, GHOST_MAP
+
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    res = robust_request("PATCH", url, {"archived": True})
+    if not res or res.status_code != 200:
+        err = res.text if res else "No Response"
+        return False, f"ERR: {err}"
+
+    NOTION_CACHE = [item for item in NOTION_CACHE if item.get("id") != page_id]
+
+    for key in [k for k, v in FAST_LOOKUP_MAP.items() if v == page_id]:
+        del FAST_LOOKUP_MAP[key]
+    for key in [k for k, v in GHOST_MAP.items() if v == page_id]:
+        del GHOST_MAP[key]
+
+    try:
+        save_local_cache(NOTION_CACHE)
+    except Exception:
+        pass
+
+    return True, "OK"
 def make_heading_2(text, color="default"):
     return {"object": "block", "type": "heading_2", "heading_2": {"rich_text": make_rich_text_list(text), "color": color}}
 
@@ -856,14 +904,15 @@ def sanitize_blocks_recursive(blocks):
 
 
 def _patch_with_retry(url, payload, chunk_no, batch_size):
-    res = requests.patch(url, headers=HEADERS, json=payload)
-    if res.status_code == 200:
+    res = robust_request("PATCH", url, payload, retries=5)
+    if res and res.status_code == 200:
         return res
 
-    if res.status_code == 429 or res.status_code in [500, 502, 503, 504]:
+    if res and (res.status_code == 429 or res.status_code in [500, 502, 503, 504]):
         print(f"🩹 [Notion Recover] action=retry chunk={chunk_no} size={batch_size}")
         time.sleep(1)
-        return requests.patch(url, headers=HEADERS, json=payload)
+        retry_res = robust_request("PATCH", url, payload, retries=5)
+        return retry_res if retry_res else res
 
     return res
 
@@ -878,22 +927,30 @@ def _send_children_in_chunks(page_id, children_blocks, chunk_size):
 
         res = _patch_with_retry(url, payload, chunk_no, len(batch))
 
-        if res.status_code == 200:
+        if res and res.status_code == 200:
             continue
+
+        if not res:
+            print("❌ [Notion Fail] status=NO_RESPONSE err=No Response")
+            return False, "No Response", i
 
         if res.status_code == 400 and "archived" in res.text.lower():
             restore_url = f"https://api.notion.com/v1/pages/{page_id}"
-            restore_res = requests.patch(restore_url, headers=HEADERS, json={"archived": False})
-            if restore_res.status_code == 200:
+            restore_res = robust_request("PATCH", restore_url, {"archived": False})
+            if restore_res and restore_res.status_code == 200:
                 print(f"🩹 [Notion Recover] action=unarchive chunk={chunk_no} size={len(batch)}")
                 retry_res = _patch_with_retry(url, payload, chunk_no, len(batch))
-                if retry_res.status_code == 200:
+                if retry_res and retry_res.status_code == 200:
                     continue
-                print(f"❌ [Notion Fail] status={retry_res.status_code} err={retry_res.text[:300]}")
-                return False, (retry_res.text or "unknown error"), i
+                retry_text = (retry_res.text if retry_res else "No Response")
+                retry_code = (retry_res.status_code if retry_res else "NO_RESPONSE")
+                print(f"❌ [Notion Fail] status={retry_code} err={str(retry_text)[:300]}")
+                return False, (retry_text or "unknown error"), i
 
-            print(f"❌ [Notion Fail] status={restore_res.status_code} err={restore_res.text[:300]}")
-            return False, (restore_res.text or "unknown error"), i
+            restore_text = (restore_res.text if restore_res else "No Response")
+            restore_code = (restore_res.status_code if restore_res else "NO_RESPONSE")
+            print(f"❌ [Notion Fail] status={restore_code} err={str(restore_text)[:300]}")
+            return False, (restore_text or "unknown error"), i
 
         print(f"❌ [Notion Fail] status={res.status_code} err={res.text[:300]}")
         return False, (res.text or "unknown error"), i
