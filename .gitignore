@@ -41,3 +41,13 @@ _MERGED_ORIGINALS/
 Thumbs.db
 .venv311/
 .venv/
+# outputs / temp
+pdf_cutter_output/
+.tmp_gui_input/
+.tmp_gui_out/
+pdf_inbox/
+
+# logs / zips
+*.log
+*.jsonl
+*.zip
