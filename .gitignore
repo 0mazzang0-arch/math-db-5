@@ -51,3 +51,23 @@ pdf_inbox/
 *.log
 *.jsonl
 *.zip
+# outputs / inbox
+pdf_cutter_output/
+pdf_inbox/
+
+# tests / local artifacts
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# generated config dumps
+configs/*.bad.*.yaml
+configs/*.bad.*.yml
+
+# local debug artifacts
+git_status.txt
+git_staged.txt
+git_unstaged.txt
+phase1.patch
