@@ -480,7 +480,7 @@ def create_new_problem_page(title, db_data, concept_ids=None):
     url = "https://api.notion.com/v1/pages"
     
     props = {
-        "이름": {"title": [{"text": {"content": title}}]}
+        "문제&풀이": {"title": [{"text": {"content": title}}]}
     }
     
     # 메타데이터 매핑
