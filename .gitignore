@@ -71,5 +71,7 @@ git_status.txt
 git_staged.txt
 git_unstaged.txt
 phase1.patchNotion_Problems_Final/
+Notion_Problems_Final/
+phase*.patch
 
 
