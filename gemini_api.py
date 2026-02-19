@@ -627,6 +627,22 @@ def parse_tagged_response(text):
             if ai_comment and ai_comment.strip():
                 strict_trap_contents.append(ai_comment)
 
+        # [Phase 1.6] necessity 후보 보강:
+        # - Type=Strategy
+        # - Symbol에 Top Note 포함
+        # - content/ai_comment에 핵심 키워드 포함
+        need_from_strategy = (dtype == "strategy")
+        need_from_symbol = ("top note" in symbol.lower())
+        need_from_keyword = any(
+            kw in (content + " " + ai_comment)
+            for kw in ("낯선", "해보고", "써보")
+        )
+        if need_from_strategy or need_from_symbol or need_from_keyword:
+            if content and content.strip():
+                strict_necessity_contents.append(content)
+            elif ai_comment and ai_comment.strip():
+                strict_necessity_contents.append(ai_comment)
+
         for source_text in (symbol, content, ai_comment):
             if not source_text:
                 continue

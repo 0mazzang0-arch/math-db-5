@@ -8,6 +8,7 @@ import copy
 import difflib
 import unicodedata
 from datetime import datetime
+import config
 from config import NOTION_API_KEY, NOTION_DATABASE_ID, MD_DIR_PATH
 
 # ==========================================================
@@ -26,6 +27,7 @@ NOTION_CACHE = []
 IS_CACHE_READY = False
 FAST_LOOKUP_MAP = {} # { "정규화된제목": "page_id" }
 GHOST_MAP = {}       # { "정규화된제목(확통제거)": "page_id" } - 확통 과목 매칭용
+NOTION_TITLE_PROP_CACHE = None
 
 # ==========================================================
 # [Core Logic 1] 통신 안전장치 (Robust Request System)
@@ -79,6 +81,42 @@ def robust_request(method, url, payload=None, retries=5):
             
     print(f"❌ [Final Fail] 5회 재시도 모두 실패. Last Error: {last_error}")
     return None
+
+
+def get_notion_title_prop_name():
+    """
+    Notion DB의 title 속성명을 자동 탐지하고 캐시합니다.
+    우선순위:
+    1) config.NOTION_TITLE_PROP_OVERRIDE
+    2) DB schema 조회(type == "title")
+    3) config.NOTION_TITLE_PROP_FALLBACK
+    """
+    global NOTION_TITLE_PROP_CACHE
+
+    if NOTION_TITLE_PROP_CACHE:
+        return NOTION_TITLE_PROP_CACHE
+
+    override = str(getattr(config, "NOTION_TITLE_PROP_OVERRIDE", "") or "").strip()
+    if override:
+        NOTION_TITLE_PROP_CACHE = override
+        return NOTION_TITLE_PROP_CACHE
+
+    fallback = str(getattr(config, "NOTION_TITLE_PROP_FALLBACK", "문제&풀이") or "문제&풀이")
+
+    try:
+        db_url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}"
+        res = robust_request("GET", db_url)
+        if res and res.status_code == 200:
+            props = (res.json() or {}).get("properties", {}) or {}
+            for prop_name, meta in props.items():
+                if isinstance(meta, dict) and meta.get("type") == "title":
+                    NOTION_TITLE_PROP_CACHE = prop_name
+                    return NOTION_TITLE_PROP_CACHE
+    except Exception as e:
+        print(f"⚠️ [Notion] title 속성 자동탐지 실패: {e}")
+
+    NOTION_TITLE_PROP_CACHE = fallback
+    return NOTION_TITLE_PROP_CACHE
 
 # ==========================================================
 # [Core Logic 2] 정규화 및 지문 추출 (Forensic Text Analysis)
@@ -274,18 +312,26 @@ def sync_db_to_memory(log_func=print):
 # ----------------------------------------------------------------------------------------------------
                     # [수술 부위] 공백 제목 무시 및 출처 컬럼 승격 로직 (Invisible Wall 방어)
                     # ----------------------------------------------------------------------------------------------------
-                    # 1순위: 이름(title/rich_text)
-                    name_obj = props.get("이름", {})
-                    name_list = name_obj.get("title", []) or name_obj.get("rich_text", [])
-                    raw_title = name_list[0].get("plain_text", "").strip() if name_list else ""
+                    title_prop = get_notion_title_prop_name()
 
-                    # 2순위: 문제&풀이(title/rich_text)
+                    # 1순위: 자동탐지된 title 속성명
+                    title_obj = props.get(title_prop, {})
+                    title_list = title_obj.get("title", []) or title_obj.get("rich_text", [])
+                    raw_title = title_list[0].get("plain_text", "").strip() if title_list else ""
+
+                    # 2순위: 이름(title/rich_text)
+                    if not raw_title:
+                        name_obj = props.get("이름", {})
+                        name_list = name_obj.get("title", []) or name_obj.get("rich_text", [])
+                        raw_title = name_list[0].get("plain_text", "").strip() if name_list else ""
+
+                    # 3순위: 문제&풀이(title/rich_text)
                     if not raw_title:
                         title_obj = props.get("문제&풀이", {})
                         t_list = title_obj.get("title", []) or title_obj.get("rich_text", [])
                         raw_title = t_list[0].get("plain_text", "").strip() if t_list else ""
 
-                    # 3순위: 출처(rich_text/title)
+                    # 4순위: 출처(rich_text/title)
                     if not raw_title:
                         src_obj = props.get("출처", {})
                         s_list = src_obj.get("rich_text", []) or src_obj.get("title", [])
@@ -479,8 +525,9 @@ def create_new_problem_page(title, db_data, concept_ids=None):
     """
     url = "https://api.notion.com/v1/pages"
     
+    title_prop = get_notion_title_prop_name()
     props = {
-        "문제&풀이": {"title": [{"text": {"content": title}}]}
+        title_prop: {"title": [{"text": {"content": title}}]}
     }
     
     # 메타데이터 매핑

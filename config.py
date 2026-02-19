@@ -86,6 +86,17 @@ LOCAL_REPO_PATHS = [
     r"D:\math-db-5"
 ]
 
+# [Assets Repo Settings] Notion image hosting repo (separate from code repo)
+ASSETS_REPO_PATH = r"D:\mathbot-assets"
+ASSETS_REPO_NAME = "mathbot-assets"
+ASSETS_IMAGE_SUBDIR = "images"
+ASSETS_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USERNAME}/{ASSETS_REPO_NAME}/main"
+
+# [Notion Title Property Settings]
+# Override is optional. Empty string means auto-detect from DB schema.
+NOTION_TITLE_PROP_OVERRIDE = ""
+NOTION_TITLE_PROP_FALLBACK = "문제&풀이"
+
 # ==========================
 # [모델 설정]
 # ==========================

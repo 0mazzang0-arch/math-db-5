@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import scrolledtext, ttk, messagebox, simpledialog, Toplevel
 import os
 import shutil
+import hashlib
 import threading
 import subprocess
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -337,14 +338,55 @@ class AutoMathBot:
             subprocess.run(["git", "push"], cwd=repo_path, check=True, capture_output=True, text=True, timeout=90)
             
             self.root.after(0, lambda: self.log(f"🚀 [Git] 업로드 완료: {os.path.basename(repo_path)}"))
+            return True
             
         except subprocess.TimeoutExpired:
             self.root.after(0, lambda: self.log(f"❌ [Git Error] 시간 초과! (Timeout). 네트워크를 확인하세요."))
+            return False
         except subprocess.CalledProcessError as e:
             error_msg = e.stderr.strip() if e.stderr else str(e)
             self.root.after(0, lambda: self.log(f"❌ [Git Error] Push 실패: {error_msg}"))
+            if "dubious ownership" in error_msg.lower():
+                self.root.after(0, lambda: self.log("⚠ 안내: git config --global --add safe.directory D:/mathbot-assets"))
+            return False
         except Exception as e:
             self.root.after(0, lambda: self.log(f"❌ [Git Error] 알 수 없는 오류: {e}"))
+            return False
+
+    def upload_image_to_assets_and_get_url(self, src_path: str, logical_name: str) -> str:
+        """Upload image to assets repo by SHA1 filename and return raw URL."""
+        try:
+            assets_dir = config.ASSETS_REPO_PATH
+            images_dir = os.path.join(assets_dir, config.ASSETS_IMAGE_SUBDIR)
+            os.makedirs(images_dir, exist_ok=True)
+
+            _, ext = os.path.splitext(logical_name or src_path)
+            ext = ext.lower() if ext else ".jpg"
+
+            sha1 = hashlib.sha1()
+            with open(src_path, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    sha1.update(chunk)
+            digest = sha1.hexdigest()
+
+            fname = f"{digest}{ext}"
+            dest_path = os.path.join(images_dir, fname)
+
+            was_new_file = False
+            if not os.path.exists(dest_path):
+                shutil.copy2(src_path, dest_path)
+                was_new_file = True
+
+            if was_new_file:
+                ok = self.git_push_updates(config.ASSETS_REPO_PATH)
+                if not ok:
+                    self.root.after(0, lambda: self.log("❌ assets push 실패"))
+                    return ""
+
+            return f"{config.ASSETS_RAW_BASE}/{config.ASSETS_IMAGE_SUBDIR}/{fname}"
+        except Exception as e:
+            self.root.after(0, lambda: self.log(f"❌ assets 업로드 실패: {e}"))
+            return ""
 
     def normalize_text(self, text):
         split_patterns = [r'##\s*풀이', r'##\s*정답', r'##\s*해설', r'\*\*풀이\*\*', r'Sol\)', r'Solution', r'정답']
@@ -355,6 +397,94 @@ class AutoMathBot:
         garbage = ['$$', '$', '{', '}', ' ', '*', '#', '-', '[', ']', '(', ')', '`', '|', '&', '\\', 'hline', 'clines']
         for g in garbage: text = text.replace(g, '')
         return text
+
+    def wrap_latex_for_notion(self, text: str) -> str:
+        if not text:
+            return text
+
+        latex_cmd_pat = re.compile(
+            r"\\(lim|frac|sqrt|sum|int|rightarrow|Rightarrow|to|sin|cos|tan|log|ln|cdot|times|pm|leq|geq|neq|infty|alpha|beta|gamma|theta|pi|dots|cdots|ldots)\b|\\[A-Za-z]+"
+        )
+        has_delim_pat = re.compile(r"\$\$.*?\$\$|\$[^$]+\$|\\\(.+?\\\)|\\\[.+?\\\]")
+        korean_pat = re.compile(r"[가-힣]")
+
+        wrapped_lines = []
+        for raw_line in str(text).splitlines():
+            line = raw_line
+            if len(line.strip()) < 2:
+                wrapped_lines.append(line)
+                continue
+            if has_delim_pat.search(line) or not latex_cmd_pat.search(line):
+                wrapped_lines.append(line)
+                continue
+
+            start = line.find("\\")
+            if start < 0:
+                wrapped_lines.append(line)
+                continue
+
+            tail = line[start:]
+            k_match = korean_pat.search(tail)
+            if k_match:
+                end = start + k_match.start()
+            else:
+                end = len(line)
+
+            if end <= start:
+                wrapped_lines.append(line)
+                continue
+
+            expr = line[start:end].strip()
+            if not expr:
+                wrapped_lines.append(line)
+                continue
+
+            wrapped_lines.append(f"{line[:start]}${expr}${line[end:]}")
+
+        return "\n".join(wrapped_lines)
+
+    def sanitize_verbatim_text(self, raw: str, printed_ocr: str = ""):
+        prefixes = (
+            "Top Note:",
+            "Left Note:",
+            "Main Equation:",
+            "Solution:",
+            "List:",
+            "Condition Note:",
+        )
+
+        def _norm(s: str) -> str:
+            return re.sub(r"[^가-힣0-9]", "", str(s or ""))
+
+        printed_norm = _norm(printed_ocr)
+        lines = []
+        for raw_line in str(raw or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            for p in prefixes:
+                if line.lower().startswith(p.lower()):
+                    line = line[len(p):].strip()
+                    break
+            if not line:
+                continue
+
+            # 인쇄문 필터: printed_ocr에 포함되는 유사 라인은 제거
+            line_norm = _norm(line)
+            keep_as_special = (
+                len(line) < 6
+                or "(핵)" in line
+                or "(특)" in line
+                or re.search(r"[①-⑳]", line) is not None
+                or "=" in line
+            )
+            if (not keep_as_special) and line_norm and len(line_norm) >= 6 and printed_norm and (line_norm in printed_norm):
+                continue
+
+            if line:
+                lines.append(line)
+        result = "\n".join(lines).strip()
+        return result if result else "HANDWRITING_OCR_FAILED"
 
     def extract_numbers(self, text):
         return set(re.findall(r'\d+(?:\.\d+)?', text))
@@ -610,6 +740,11 @@ class AutoMathBot:
         for ext in exts:
             path = os.path.join(COMPLETED_DIR, filename_base + ext)
             if os.path.exists(path): return path
+        for root, _, files in os.walk(COMPLETED_DIR):
+            for ext in exts:
+                candidate = filename_base + ext
+                if candidate in files:
+                    return os.path.join(root, candidate)
         return None
 
     def on_problem_select(self, event):
@@ -967,30 +1102,21 @@ class AutoMathBot:
                         detected_concept_ids.append(self.concept_map[title_key])
 
                 # ------------------------------------------------------------------
-                # 4. GitHub & Body Content Packaging
+                # 4. Assets URL & Body Content Packaging
+                # ------------------------------------------------------------------
+                src_name = os.path.splitext(img)[0] if is_new_problem else os.path.splitext(best_file)[0]
+                assets_url = self.upload_image_to_assets_and_get_url(path, img)
 
-                # ------------------------------------------------------------------
-                # 4. GitHub & Body Content Packaging
-                # ------------------------------------------------------------------
-                repo_idx = 4 
-                target_repo_path = config.LOCAL_REPO_PATHS[repo_idx]
-                target_repo_name = config.REPO_NAMES[repo_idx]
-                
-                if is_new_problem: src_name = os.path.splitext(img)[0]
-                else: src_name = os.path.splitext(best_file)[0]
-                    
-                _, ext = os.path.splitext(img)
-                safe_name = f"{src_name}{ext}".replace(" ", "_").replace("[", "").replace("]", "").replace("(", "").replace(")", "")
-                github_url = f"https://raw.githubusercontent.com/{config.GITHUB_USERNAME}/{target_repo_name}/main/{safe_name}"
-                
                 if "body_content" in json_data:
-                    json_data["body_content"]["image_url"] = github_url
+                    if assets_url:
+                        json_data["body_content"]["image_url"] = assets_url
                     if is_new_problem:
                         json_data["body_content"]["problem_text"] = search_text if search_text else "OCR 텍스트 없음"
                     else:
                         if "problem_text" in json_data["body_content"]: del json_data["body_content"]["problem_text"]
-                    if not json_data["body_content"].get("verbatim_handwriting"):
-                        json_data["body_content"]["verbatim_handwriting"] = search_text or "OCR 텍스트 없음"
+                    raw_verbatim = json_data["body_content"].get("verbatim_handwriting", "")
+                    cleaned_verbatim = self.sanitize_verbatim_text(raw_verbatim, printed_ocr=search_text)
+                    json_data["body_content"]["verbatim_handwriting"] = cleaned_verbatim if cleaned_verbatim else "HANDWRITING_OCR_FAILED"
 
                 # ------------------------------------------------------------------
                 # 5. Notion Page Creation / Update (속성 및 본문 업데이트)
@@ -1048,10 +1174,15 @@ class AutoMathBot:
                 if page_id:
                     page_url = f"https://www.notion.so/{page_id.replace('-', '')}"
                     self.root.after(0, lambda t=src_name, u=page_url: self.add_history(f"✅ {t}", u))
-                    final_local_path = os.path.join(target_repo_path, safe_name)
                     try: 
-                        shutil.move(path, final_local_path)
-                        self.git_push_updates(target_repo_path)
+                        rel_dir = os.path.relpath(os.path.dirname(path), config.DEEP_WATCH_DIR)
+                        if rel_dir in (".", ""):
+                            target_dir = os.path.join(COMPLETED_DIR, "[1]_오답분석_Deep")
+                        else:
+                            target_dir = os.path.join(COMPLETED_DIR, "[1]_오답분석_Deep", rel_dir)
+                        if not os.path.exists(target_dir):
+                            os.makedirs(target_dir)
+                        shutil.move(path, os.path.join(target_dir, img))
                     except Exception as e: self.log(f"⚠ 이동/업로드 실패: {e}")
                 else:
                     self.move_to_dir(path, ERROR_DIR, img)
@@ -1326,21 +1457,19 @@ class AutoMathBot:
                                 if title_key in self.concept_map:
                                     detected_concept_ids.append(self.concept_map[title_key])
 
-                            # 4. GitHub & URL
-                            repo_idx = 4 
-                            target_repo_path = config.LOCAL_REPO_PATHS[repo_idx]
-                            target_repo_name = config.REPO_NAMES[repo_idx]
+                            # 4. Assets URL
                             src_name = os.path.splitext(img)[0] if is_new_problem else os.path.splitext(best_file)[0]
-                            safe_name = f"{src_name}{ext}".replace(" ", "_").replace("[", "").replace("]", "")
-                            github_url = f"https://raw.githubusercontent.com/{config.GITHUB_USERNAME}/{target_repo_name}/main/{safe_name}"
+                            assets_url = self.upload_image_to_assets_and_get_url(path, img)
                             
                             if "body_content" in json_data:
-                                json_data["body_content"]["image_url"] = github_url
+                                if assets_url:
+                                    json_data["body_content"]["image_url"] = assets_url
                                 if is_new_problem: json_data["body_content"]["problem_text"] = search_text or "OCR 텍스트 없음"
                                 else:
                                     if "problem_text" in json_data["body_content"]: del json_data["body_content"]["problem_text"]
-                                if not json_data["body_content"].get("verbatim_handwriting"):
-                                    json_data["body_content"]["verbatim_handwriting"] = search_text or "OCR 텍스트 없음"
+                                raw_verbatim = json_data["body_content"].get("verbatim_handwriting", "")
+                                cleaned_verbatim = self.sanitize_verbatim_text(raw_verbatim, printed_ocr=search_text)
+                                json_data["body_content"]["verbatim_handwriting"] = cleaned_verbatim if cleaned_verbatim else "HANDWRITING_OCR_FAILED"
 
                             # 5. Notion & MD Write (Mode Applied Here)
                             page_id = None
@@ -1405,10 +1534,15 @@ class AutoMathBot:
                             if page_id:
                                 page_url = f"https://www.notion.so/{page_id.replace('-', '')}"
                                 self.root.after(0, lambda t=src_name, u=page_url: self.add_history(f"✅ {t}", u))
-                                final_local_path = os.path.join(target_repo_path, safe_name)
                                 try:
-                                    shutil.move(path, final_local_path)
-                                    self.git_push_updates(target_repo_path)
+                                    rel_dir = os.path.relpath(os.path.dirname(path), config.DEEP_WATCH_DIR)
+                                    if rel_dir in (".", ""):
+                                        target_dir = os.path.join(COMPLETED_DIR, "[1]_오답분석_Deep")
+                                    else:
+                                        target_dir = os.path.join(COMPLETED_DIR, "[1]_오답분석_Deep", rel_dir)
+                                    if not os.path.exists(target_dir):
+                                        os.makedirs(target_dir)
+                                    shutil.move(path, os.path.join(target_dir, img))
                                 except Exception as e: self.log(f"⚠ 이동/업로드 실패: {e}")
                             else:
                                 self.move_to_dir(path, ERROR_DIR, img)
@@ -1525,21 +1659,18 @@ class AutoMathBot:
                                 if title_key in self.concept_map:
                                     detected_concept_ids.append(self.concept_map[title_key])
 
-                            # 4. GitHub
-                            repo_idx = 4 
-                            target_repo_path = config.LOCAL_REPO_PATHS[repo_idx]
-                            target_repo_name = config.REPO_NAMES[repo_idx]
-                            _, ext = os.path.splitext(img)
+                            # 4. Assets URL
                             src_name = os.path.splitext(img)[0] if is_new_problem else os.path.splitext(best_file)[0]
-                            safe_name = f"{src_name}{ext}".replace(" ", "_").replace("[", "").replace("]", "")
-                            github_url = f"https://raw.githubusercontent.com/{config.GITHUB_USERNAME}/{target_repo_name}/main/{safe_name}"
+                            assets_url = self.upload_image_to_assets_and_get_url(path, img)
                             if "body_content" in json_data:
-                                json_data["body_content"]["image_url"] = github_url
+                                if assets_url:
+                                    json_data["body_content"]["image_url"] = assets_url
                                 if is_new_problem: json_data["body_content"]["problem_text"] = search_text or "OCR 텍스트 없음"
                                 else: 
                                     if "problem_text" in json_data["body_content"]: del json_data["body_content"]["problem_text"]
-                                if not json_data["body_content"].get("verbatim_handwriting"):
-                                    json_data["body_content"]["verbatim_handwriting"] = search_text or "OCR 텍스트 없음"
+                                raw_verbatim = json_data["body_content"].get("verbatim_handwriting", "")
+                                cleaned_verbatim = self.sanitize_verbatim_text(raw_verbatim, printed_ocr=search_text)
+                                json_data["body_content"]["verbatim_handwriting"] = cleaned_verbatim if cleaned_verbatim else "HANDWRITING_OCR_FAILED"
 
                             # 5. Notion & MD (Timeout Branch - Mode Logic Duplicated)
                             page_id = None
@@ -1587,10 +1718,15 @@ class AutoMathBot:
 
                             # 6. Finish
                             if page_id:
-                                final_local_path = os.path.join(target_repo_path, safe_name)
                                 try:
-                                    shutil.move(path, final_local_path)
-                                    self.git_push_updates(target_repo_path)
+                                    rel_dir = os.path.relpath(os.path.dirname(path), config.DEEP_WATCH_DIR)
+                                    if rel_dir in (".", ""):
+                                        target_dir = os.path.join(COMPLETED_DIR, "[1]_오답분석_Deep")
+                                    else:
+                                        target_dir = os.path.join(COMPLETED_DIR, "[1]_오답분석_Deep", rel_dir)
+                                    if not os.path.exists(target_dir):
+                                        os.makedirs(target_dir)
+                                    shutil.move(path, os.path.join(target_dir, img))
                                 except: pass
                             else:
                                 self.move_to_dir(path, ERROR_DIR, img)
@@ -1777,13 +1913,6 @@ class AutoMathBot:
                                         page_id, msg = notion_api.create_new_problem_page(q_name_base, db_data)
                                         
                                         if page_id:
-                                            body_content = {
-                                                "problem_text": q_text,
-                                                "ai_solution": f"## 해설\n{a_text}" if a_text else "해설 없음",
-                                                "verbatim_handwriting": "Track B 자동 수집 모드", "image_url": ""
-                                            }
-                                            notion_api.safe_append_children(page_id, body_content)
-                                            
                                             current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                                             md_content = f"""---
 type: collection
@@ -1807,6 +1936,24 @@ date: {current_time_str}
 """
                                             md_save_path = os.path.join(config.MD_DIR_PATH, f"{q_name_base}.md")
                                             with open(md_save_path, "w", encoding="utf-8") as f: f.write(md_content)
+
+                                            try:
+                                                with open(md_save_path, "r", encoding="utf-8") as f:
+                                                    md_text_for_notion = f.read().strip()
+                                            except Exception:
+                                                md_text_for_notion = ""
+                                            if not md_text_for_notion:
+                                                md_text_for_notion = f"## 문제\n{q_text}\n\n## 해설\n{a_text or '해설 없음'}"
+                                            md_text_for_notion = self.wrap_latex_for_notion(md_text_for_notion)
+
+                                            track_b_image_url = self.upload_image_to_assets_and_get_url(q_path, file)
+                                            body_content = {
+                                                "problem_text": q_text,
+                                                "verbatim_handwriting": md_text_for_notion,
+                                                "ai_solution": "",
+                                                "image_url": track_b_image_url if track_b_image_url else ""
+                                            }
+                                            notion_api.safe_append_children(page_id, body_content)
                                                 
                                             relative_path = os.path.relpath(root, config.FAST_WATCH_DIR)
                                             target_dir = os.path.join(COMPLETED_DIR, "[2]_자료수집_Fast", relative_path)
@@ -1842,24 +1989,19 @@ date: {current_time_str}
                     for img in files_concept:
                         if not self.is_running: break
                         path = os.path.join(config.CONCEPT_WATCH_FOLDER, img)
-                        repo_idx = 4
-                        target_repo_path = config.LOCAL_REPO_PATHS[repo_idx]
-                        target_repo_name = config.REPO_NAMES[repo_idx]
-                        _, ext = os.path.splitext(img)
                         try:
+                            assets_url = self.upload_image_to_assets_and_get_url(path, img)
                             result_json = gemini_api.extract_concepts_flexible(path)
                             if result_json and "concepts" in result_json:
                                 for c in result_json["concepts"]:
-                                    title = c.get('title', '제목없음')
-                                    safe_title = "".join([x for x in title if x.isalnum() or x in (' ', '_', '-')]).strip()
-                                    safe_name = f"[개념]_{safe_title}{ext}".replace(" ", "_")
-                                    github_url = f"https://raw.githubusercontent.com/{config.GITHUB_USERNAME}/{target_repo_name}/main/{safe_name}"
-                                    self.process_single_concept(c, github_url)
-                                
-                                final_local_path = os.path.join(target_repo_path, safe_name)
+                                    self.process_single_concept(c, assets_url if assets_url else None)
+
                                 try:
-                                    shutil.move(path, final_local_path)
-                                    self.root.after(0, lambda f=safe_name: self.log(f"✅ [개념] {f} 완료"))
+                                    target_dir = os.path.join(COMPLETED_DIR, "[3]_실전개념")
+                                    if not os.path.exists(target_dir):
+                                        os.makedirs(target_dir)
+                                    shutil.move(path, os.path.join(target_dir, img))
+                                    self.root.after(0, lambda f=img: self.log(f"✅ [개념] {f} 완료"))
                                     self.root.after(0, self.update_concept_list)
                                 except: pass
                             else:
@@ -1892,7 +2034,11 @@ date: {current_time_str}
             self.root.after(0, lambda d=concept_data: self.log(f"⚠️ [Type Error] process_single_concept 입력이 dict 아님: {type(d)} -> {d}"))
             return None
         # 1. 로컬 저장 (내부 장부 기록 - 리스트 표시용)
-        concept_manager.save_concept(concept_data)
+        save_status = concept_manager.save_concept(concept_data)
+        title_for_log = concept_data.get('title', '제목없음')
+        if save_status in ("SKIPPED_DUPLICATE", "MERGED"):
+            self.root.after(0, lambda t=title_for_log: self.log(f"ℹ [Concept] 이미 유사 항목에 포함되어 Skip: {t}"))
+            return None
         
         # 2. Notion 동기화 (누락된 '보고 체계' 복구)
         # 로컬에 저장된 내용을 Notion 실전개념 DB로 즉시 전송합니다.
@@ -1910,7 +2056,7 @@ date: {current_time_str}
                     self.concept_map[title.replace(" ", "")] = page_id
                     self.root.after(0, lambda: self.log(f"📡 [Sync] 노션 업로드 성공: {title}"))
                 else:
-                    self.root.after(0, lambda: self.log(f"⚠️ [Sync] 노션 업로드 실패 (ID 반환 없음): {title}"))
+                    self.root.after(0, lambda: self.log(f"ℹ [Concept] Notion ID 미반환(스킵 가능): {title}"))
             else:
                 # 혹시 함수 이름이 다를 경우를 대비한 예외 처리
                 self.root.after(0, lambda: self.log("⚠️ [System] concept_sync.create_concept_page 함수를 찾을 수 없습니다."))

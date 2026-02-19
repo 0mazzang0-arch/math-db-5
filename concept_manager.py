@@ -266,14 +266,14 @@ def save_concept(new_concept):
     4. 나머지 -> 신규 생성
     """
     if not new_concept or "title" not in new_concept:
-        return
+        return "INVALID"
 
     raw_title = new_concept['title'].strip()
     raw_content = new_concept.get('content', "").strip()
 
     if len(raw_content) < 10:
         log_info(f"내용 부실로 저장 거부: {raw_title}")
-        return
+        return "REJECTED_WEAK"
 
     create_snapshot()
     data = load_concepts()
@@ -310,7 +310,7 @@ def save_concept(new_concept):
 
         if normalize_fingerprint(raw_content) in normalize_fingerprint(old_content):
             log_info(f"🛡️ [Skip] '{raw_title}' 내용은 이미 '{target_title}'에 있음.")
-            return
+            return "SKIPPED_DUPLICATE"
 
         today = datetime.now().strftime("%Y-%m-%d")
         append_header = f"\n\n\n--- 📅 [추가: {today}] (유사도 {int(highest_sim*100)}%) ---\n"
@@ -322,7 +322,7 @@ def save_concept(new_concept):
         save_all_concepts(data)
         log_info(f"🔗 [Merged] '{raw_title}' -> '{target_title}' 병합 완료.")
         sync_db_to_memory(lambda _: None)
-        return
+        return "MERGED"
 
     elif highest_sim >= SIMILARITY_THRESHOLD_WARN:
         sim_percent = int(highest_sim * 100)
@@ -343,7 +343,7 @@ def save_concept(new_concept):
         data.append(new_concept)
         save_all_concepts(data)
         sync_db_to_memory(lambda _: None)
-        return
+        return "TAGGED_NEW"
 
     new_concept['created_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     new_concept['last_updated'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -352,6 +352,7 @@ def save_concept(new_concept):
     save_all_concepts(data)
     log_info(f"✨ [New] '{raw_title}' 신규 등록.")
     sync_db_to_memory(lambda _: None)
+    return "NEW"
 
 
 # ==========================================================
