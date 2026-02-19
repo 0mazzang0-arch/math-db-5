@@ -1,4 +1,4 @@
-# 무시할 폴더 및 파일들
+﻿# 臾댁떆???대뜑 諛??뚯씪??
 build/
 dist/
 
@@ -6,19 +6,19 @@ dist/
 *.exe
 *.pkg
 
-# 1. 비밀 금고 (절대 업로드 금지!)
+# 1. 鍮꾨? 湲덇퀬 (?덈? ?낅줈??湲덉?!)
 .env
 
-# 2. 파이썬 관련 잡동사니
+# 2. ?뚯씠??愿???〓룞?щ땲
 __pycache__/
 *.py[cod]
 
-# 3. 로그 파일 (실행 기록)
+# 3. 濡쒓렇 ?뚯씪 (?ㅽ뻾 湲곕줉)
 *.log
 concept_sync.log
 concept_manager.log
 
-# 4. 데이터베이스 및 캐시 파일 (중요 정보 포함 가능성)
+# 4. ?곗씠?곕쿋?댁뒪 諛?罹먯떆 ?뚯씪 (以묒슂 ?뺣낫 ?ы븿 媛?μ꽦)
 *.sqlite3
 mathbot.sqlite3
 *.json
@@ -29,14 +29,14 @@ category_map.json
 concept_book.json
 concept_whitelist.json
 
-# 5. 백업 및 작업 결과 폴더
+# 5. 諛깆뾽 諛??묒뾽 寃곌낵 ?대뜑
 concept_history/
 _BACKUP/
 _ERROR_FILES/
 _COMPLETED/
 _MERGED_ORIGINALS/
 
-# 6. 운영체제 관련 파일
+# 6. ?댁쁺泥댁젣 愿???뚯씪
 .DS_Store
 Thumbs.db
 .venv311/
@@ -70,4 +70,6 @@ configs/*.bad.*.yml
 git_status.txt
 git_staged.txt
 git_unstaged.txt
-phase1.patch
+phase1.patchNotion_Problems_Final/
+
+
